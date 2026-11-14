@@ -1,0 +1,314 @@
+import { CoordinatorSidebar } from "./CoordinatorSidebar";
+import { useCoordinatorWorkspaceEnabled } from "@/hooks/useCoordinatorWorkspaceEnabled";
+import {
+  Inbox,
+  ListChecks,
+  CircleCheck,
+  Target,
+  LayoutDashboard,
+  DollarSign,
+  History,
+  Search,
+  SquarePen,
+  Network,
+  Boxes,
+  Repeat,
+  Layers,
+  GitBranch,
+  Package,
+  Settings,
+  FolderOpen,
+  Unplug,
+  MessagesSquare,
+  MessageCircle,
+  GanttChartSquare,
+  LayoutGrid,
+  Users,
+  Box,
+  FileUp,
+  Camera,
+  Calculator,
+  ShoppingBag,
+  Activity,
+  Send,
+  CheckCircle2,
+  ClipboardList,
+  Cpu,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { SidebarSection } from "./SidebarSection";
+import { SidebarNavItem } from "./SidebarNavItem";
+import { SidebarAgents } from "./SidebarAgents";
+import { SidebarProjects } from "./SidebarProjects";
+import { SidebarStarredProjects } from "./SidebarStarredProjects";
+import { useAgentChatEnabled } from "@/hooks/useAgentChatEnabled";
+import { useAgentChatNavigation } from "@/hooks/useAgentChatNavigation";
+import { SidebarRecentTasks } from "./SidebarRecentTasks";
+import { useDialogActions } from "../context/DialogContext";
+import { useCompany } from "../context/CompanyContext";
+import { useSidebar } from "../context/SidebarContext";
+import { attentionApi } from "../api/attention";
+import { heartbeatsApi } from "../api/heartbeats";
+import { instanceSettingsApi } from "../api/instanceSettings";
+import { queryKeys } from "../lib/queryKeys";
+import { attentionBadgeCount } from "../lib/attention";
+import { useInboxBadge } from "../hooks/useInboxBadge";
+import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
+import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
+import { PluginSlotOutlet } from "@/plugins/slots";
+import { PluginLauncherOutlet } from "@/plugins/launchers";
+import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
+import { primarySidebarStyles } from "./primary-sidebar-styles";
+
+export function Sidebar({ children }: { children?: ReactNode }) {
+  const { enabled } = useCoordinatorWorkspaceEnabled();
+  return enabled ? <CoordinatorSidebar>{children}</CoordinatorSidebar> : <ClassicSidebar>{children}</ClassicSidebar>;
+}
+
+function ClassicSidebar({ children }: { children?: ReactNode }) {
+  const { openNewIssue } = useDialogActions();
+  const { enabled: agentChatEnabled } = useAgentChatEnabled();
+  const chatNavigation = useAgentChatNavigation();
+  const unreadChatCount = chatNavigation.chats.data?.filter(chat => chat.isUnreadForMe).length ?? 0;
+  // Every labeled section is collapsible (session-scoped, default open) —
+  // one policy across static nav groups and the data-driven sections.
+  const [workOpen, setWorkOpen] = useState(true);
+  const [atelierOpen, setAtelierOpen] = useState(true);
+  const [organizationOpen, setOrganizationOpen] = useState(true);
+  const { selectedCompanyId, selectedCompany } = useCompany();
+  const { collapsed, peeking } = useSidebar();
+  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
+  const rail = collapsed && !peeking;
+  const inboxBadge = useInboxBadge(selectedCompanyId);
+  const { data: experimentalSettings } = useQuery({
+    queryKey: queryKeys.instance.experimentalSettings,
+    queryFn: () => instanceSettingsApi.getExperimental(),
+  });
+  const liveRunsQueryKey = queryKeys.liveRuns(selectedCompanyId!);
+  const sharedLiveRuns = useSharedPollingQuery({
+    companyId: selectedCompanyId,
+    resourceKey: "live-runs",
+    queryKey: liveRunsQueryKey,
+    enabled: !!selectedCompanyId,
+    // Event-sourced via LiveUpdatesProvider (GitHub issue 9627) + reconnect reconcile — no
+    // interval poll needed. Polling here also re-armed React Query's timer on
+    // every live-event cache write, a major source of steady-state churn.
+    refetchInterval: false,
+    leaderOnly: true,
+  });
+  const { data: liveRuns, dataUpdatedAt: liveRunsUpdatedAt } = useQuery({
+    queryKey: liveRunsQueryKey,
+    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
+    enabled: sharedLiveRuns.enabled,
+    refetchInterval: sharedLiveRuns.refetchInterval,
+  });
+  usePublishSharedQueryData(sharedLiveRuns, liveRuns, liveRunsUpdatedAt);
+  const liveRunCount = liveRuns?.length ?? 0;
+  const liveIssueIds = new Set(
+    (liveRuns ?? []).flatMap((run) => run.issueId ? [run.issueId] : []),
+  );
+  const chatRail = agentChatEnabled && streamlinedUiEnabled;
+  // The merged Tasks page only exists in the streamlined shell, so the legacy
+  // shell keeps its Inbox row even with the flag on.
+  const combinedInboxTasks = streamlinedUiEnabled && experimentalSettings?.enableCombinedInboxTasks === true;
+  const showWorkspacesLink = experimentalSettings?.enableIsolatedWorkspaces === true;
+  const showStatusCards = experimentalSettings?.enableStatusCards === true;
+  const goalsLinkPending = experimentalSettings === undefined;
+  const showGoalsLink = experimentalSettings?.enableGoalsSidebarLink === true;
+  // Decisions (attention home) is an experimental surface (PAP-13481): the nav
+  // item is hidden entirely until the flag is enabled (same no-flash pattern as
+  // showWorkspacesLink — it defaults hidden, so no placeholder is needed).
+  const showDecisions = experimentalSettings?.enableDecisions === true;
+  const { data: attentionFeed } = useQuery({
+    queryKey: queryKeys.attention(selectedCompanyId!),
+    queryFn: () => attentionApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId && showDecisions,
+    refetchInterval: 60_000,
+  });
+  const attentionCount = attentionBadgeCount(attentionFeed);
+  const showCases = experimentalSettings?.enableCases === true;
+  // Conference Room Chat flag (PAP-136/PAP-137): the Conference Room nav item
+  // is a new surface, hidden entirely while the flag is off (same no-flash
+  // pattern as showWorkspacesLink above).
+  const conferenceRoomChatEnabled = experimentalSettings?.enableConferenceRoomChat === true;
+
+  const pluginContext = {
+    companyId: selectedCompanyId,
+    companyPrefix: selectedCompany?.issuePrefix ?? null,
+  };
+
+  return (
+    <aside
+      className={cn(
+        "w-full h-full min-h-0 flex flex-col",
+        streamlinedUiEnabled
+          ? primarySidebarStyles.surface
+          : "border-r border-border bg-background",
+      )}
+    >
+      {/* Top bar: company name, aligned with top sections and borderless.
+          Search deliberately does NOT live here:
+          the header's spare width goes to the workspace/organization name,
+          which is the user's orientation anchor and truncates otherwise.
+          Search is the first nav item below instead. */}
+      <div className="flex h-(--sz-60px) shrink-0 items-center gap-1 px-3">
+        <SidebarCompanyMenu />
+      </div>
+
+      <nav className={primarySidebarStyles.nav}>
+        <div className={primarySidebarStyles.group}>
+          {/* New Task button aligned with nav items */}
+          {(() => {
+            const newTaskButton = (
+              <button
+                onClick={() => openNewIssue()}
+                data-slot="icon-button"
+                aria-label={rail ? "New Task" : undefined}
+                className={cn(
+                  "flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <SquarePen className="h-4 w-4 shrink-0" />
+                <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : "truncate"}>Tạo Công việc</span>
+              </button>
+            );
+            return rail ? (
+              <Tooltip>
+                <TooltipTrigger asChild>{newTaskButton}</TooltipTrigger>
+                <TooltipContent side="right">Tạo Công việc</TooltipContent>
+              </Tooltip>
+            ) : (
+              newTaskButton
+            );
+          })()}
+          <SidebarNavItem to="/search" label="Tìm kiếm" icon={Search} />
+          <SidebarNavItem to="/dashboard" label="Tổng quan" icon={LayoutDashboard} liveCount={liveRunCount} />
+          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Conversations" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" /> : null}
+          <SidebarNavItem to="/issues" label="Công việc" icon={CircleCheck} />
+          <SidebarNavItem to="/agents" label="AI Agents" icon={Users} />
+          <SidebarNavItem to="/control-center" label="Agent Control / Workflow" icon={Cpu} textBadge="14 Nodes" />
+          <SidebarNavItem to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+          <SidebarNavItem to="/apps" label="Kết nối AI / MCP" icon={Unplug} />
+        </div>
+
+        <SidebarSection
+          label="Thiết kế Nội thất 2D/3D"
+          collapsible={{ open: atelierOpen, onOpenChange: setAtelierOpen }}
+        >
+          <SidebarNavItem to="/design-studio" label="Không gian thiết kế 2D/3D" icon={Box} textBadge="3D" />
+          <SidebarNavItem to="/inventory-bom" label="Danh mục nội thất" icon={ClipboardList} />
+          <SidebarNavItem to="/cost-estimation" label="Dự toán" icon={Calculator} />
+          <SidebarNavItem to="/render-compare" label="Phối cảnh Render" icon={Camera} />
+          <SidebarNavItem to="/floorplan-import" label="Nhập mặt bằng 2D" icon={FileUp} />
+          <SidebarNavItem to="/shopping-catalog" label="Danh mục mua sắm" icon={ShoppingBag} />
+        </SidebarSection>
+
+        <SidebarSection label="Điều phối & Hệ thống" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
+          <SidebarNavItem to="/approvals/pending" label="Phê duyệt" icon={CheckCircle2} />
+          <SidebarNavItem to="/settings/telegram" label="Cài đặt / Telegram" icon={Send} />
+          <SidebarNavItem to="/system-health" label="Hạ tầng Local-Lite" icon={Activity} />
+          {chatRail ? (
+            <SidebarNavItem to="/chats" label="Hội thoại / Chat" icon={MessageCircle} badge={unreadChatCount} badgeLabel="unread chats" />
+          ) : null}
+          {combinedInboxTasks ? (
+            <SidebarNavItem
+              to="/issues"
+              label="Công việc / Tasks"
+              icon={CircleCheck}
+              badge={inboxBadge.inbox}
+              badgeLabel="unread"
+              badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
+              alert={inboxBadge.failedRuns > 0}
+            />
+          ) : (
+            <SidebarNavItem to="/issues" label="Công việc / Tasks" icon={CircleCheck} />
+          )}
+          {streamlinedUiEnabled ? (
+            <>
+              <SidebarNavItem to="/projects" label="Dự án" icon={FolderOpen} />
+              <SidebarStarredProjects />
+            </>
+          ) : null}
+          <SidebarNavItem to="/approvals/pending" label="Chờ duyệt / Approvals" icon={CheckCircle2} />
+          <SidebarNavItem to="/routines" label="Lịch tự động" icon={Repeat} />
+          <SidebarNavItem to="/artifacts" label="Sản phẩm / Artifacts" icon={Package} />
+          {showCases ? (
+            <SidebarNavItem to="/cases" label="Hồ sơ" icon={Layers} textBadge="beta" />
+          ) : null}
+          {showGoalsLink ? (
+            <SidebarNavItem to="/goals" label="Mục tiêu" icon={Target} />
+          ) : goalsLinkPending ? (
+            <div
+              data-testid="sidebar-goals-placeholder"
+              className="h-8 pointer-coarse:h-7"
+              aria-hidden="true"
+            />
+          ) : null}
+          {showWorkspacesLink ? (
+            <SidebarNavItem to="/workspaces" label="Không gian làm việc" icon={GitBranch} />
+          ) : null}
+          <PluginSlotOutlet
+            slotTypes={["sidebar"]}
+            context={pluginContext}
+            className="flex flex-col gap-0.5"
+            itemClassName="text-(length:--text-compact) font-medium"
+            missingBehavior="placeholder"
+          />
+          <PluginLauncherOutlet
+            placementZones={["sidebar"]}
+            context={pluginContext}
+            className="flex flex-col gap-0.5"
+            itemClassName="text-(length:--text-compact) font-medium"
+          />
+        </SidebarSection>
+
+        {streamlinedUiEnabled ? (
+          <SidebarSection
+            label="AI Agents & Hệ thống"
+            collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
+          >
+            <SidebarNavItem to="/agents" label="AI Agents" icon={Users} />
+            <SidebarNavItem to="/skills" label="Skills / Skill Studio" icon={Boxes} />
+            <SidebarNavItem to="/apps" label="Apps & Kết nối MCP" icon={Unplug} />
+            <SidebarNavItem to="/activity" label="Lịch sử / Activity" icon={History} />
+            <SidebarNavItem to="/company/settings" label="Cài đặt" icon={Settings} />
+          </SidebarSection>
+        ) : null}
+
+        {children ?? (streamlinedUiEnabled ? <SidebarAgents streamlined /> : null)}
+
+        {streamlinedUiEnabled ? (
+          <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} />
+        ) : (
+          <>
+            <SidebarProjects />
+            <SidebarAgents />
+            <SidebarSection
+              label="Organization"
+              collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
+            >
+              <SidebarNavItem to="/org" label="Org" icon={Network} />
+              <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
+              <SidebarNavItem to="/timeline" label="Timeline" icon={GanttChartSquare} />
+              <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
+              <SidebarNavItem to="/activity" label="Activity" icon={History} />
+              <SidebarNavItem to="/activity/commentary" label="Commentary" icon={History} />
+              <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+            </SidebarSection>
+          </>
+        )}
+
+        <PluginSlotOutlet
+          slotTypes={["sidebarPanel"]}
+          context={pluginContext}
+          className="flex flex-col gap-3"
+          itemClassName="rounded-lg border border-border p-3"
+          missingBehavior="placeholder"
+        />
+      </nav>
+    </aside>
+  );
+}
