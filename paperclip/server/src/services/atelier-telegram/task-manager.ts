@@ -4,12 +4,13 @@ import {
   agents,
   approvals,
   companies,
+  companyMemberships,
   goals,
   issueComments,
   issues,
   projects,
 } from "@paperclipai/db";
-import { addTelegramLog } from "./config.js";
+import { addTelegramLog, getTelegramConfigSync } from "./config.js";
 import {
   queueIssueAssignmentWakeup,
   type IssueAssignmentWakeupDeps,
@@ -43,6 +44,54 @@ export class AtelierTelegramTaskManager {
   constructor(db: Db, heartbeat?: IssueAssignmentWakeupDeps) {
     this.db = db;
     this.heartbeat = heartbeat;
+  }
+
+  /**
+   * Paperclip heartbeat runs must be sponsored by a real user that has an
+   * active membership in the target company. A Telegram user/chat id is an
+   * external identity, so persisting `telegram:<id>` as responsibleUserId
+   * makes the adapter fail during setup. Prefer an explicit pairing, then the
+   * local trusted board user, then any active board member.
+   */
+  private async resolveTelegramActorUserId(
+    companyId: string,
+    telegramUserId: number,
+  ): Promise<string | null> {
+    const pairing = getTelegramConfigSync().userPairings.find(
+      (entry) => entry.telegramUserId === telegramUserId,
+    );
+    const preferredIds = [pairing?.paperclipUserId, "local-board"].filter(
+      (value): value is string => Boolean(value?.trim()),
+    );
+
+    for (const principalId of [...new Set(preferredIds)]) {
+      const [membership] = await this.db
+        .select({ principalId: companyMemberships.principalId })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.companyId, companyId),
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, principalId),
+            eq(companyMemberships.status, "active"),
+          ),
+        )
+        .limit(1);
+      if (membership) return membership.principalId;
+    }
+
+    const [fallback] = await this.db
+      .select({ principalId: companyMemberships.principalId })
+      .from(companyMemberships)
+      .where(
+        and(
+          eq(companyMemberships.companyId, companyId),
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.status, "active"),
+        ),
+      )
+      .limit(1);
+    return fallback?.principalId ?? null;
   }
 
   public async getCompanyAndProject(): Promise<{ companyId: string; projectId: string; companyPrefix: string }> {
@@ -274,6 +323,7 @@ export class AtelierTelegramTaskManager {
     telegramUsername?: string;
   }): Promise<{ issueId: string; identifier: string; assignedAgentName: string }> {
     const { companyId, projectId, companyPrefix } = await this.getCompanyAndProject();
+    const actorUserId = await this.resolveTelegramActorUserId(companyId, params.telegramUserId);
     const allAgents = await this.listAgents();
 
     const chief = allAgents.find((a) => a.key === "agent_chief_architect") || allAgents[0];
@@ -314,8 +364,8 @@ export class AtelierTelegramTaskManager {
         status: "in_progress",
         priority: "high",
         assigneeAgentId: targetAgentId,
-        createdByUserId: `telegram:${params.telegramUserId}`,
-        responsibleUserId: `telegram:${params.telegramUserId}`,
+        createdByUserId: actorUserId,
+        responsibleUserId: actorUserId,
         issueNumber: nextNum,
         identifier,
         originKind: "manual",
@@ -328,8 +378,8 @@ export class AtelierTelegramTaskManager {
       .values({
         companyId,
         issueId: created.id,
-        authorUserId: `telegram:${params.telegramUserId}`,
-        authorType: "user",
+        authorUserId: actorUserId,
+        authorType: actorUserId ? "user" : "system",
         body: `📩 **Yêu cầu khởi tạo qua Telegram** (Người gửi: @${params.telegramUsername || params.telegramUserId}):\n\n${params.description}`,
       })
       .returning({ id: issueComments.id });
@@ -341,8 +391,8 @@ export class AtelierTelegramTaskManager {
         reason: "issue_assigned",
         mutation: "telegram.create",
         contextSource: "telegram.task.create",
-        requestedByActorType: "user",
-        requestedByActorId: `telegram:${params.telegramUserId}`,
+        requestedByActorType: actorUserId ? "user" : "system",
+        requestedByActorId: actorUserId,
         taskKey: created.identifier,
         wakeCommentId: createdComment?.id ?? null,
       });
@@ -368,14 +418,15 @@ export class AtelierTelegramTaskManager {
     telegramUsername?: string;
   }): Promise<void> {
     const { companyId } = await this.getCompanyAndProject();
+    const actorUserId = await this.resolveTelegramActorUserId(companyId, params.telegramUserId);
 
     const [createdComment] = await this.db
       .insert(issueComments)
       .values({
         companyId,
         issueId: params.issueId,
-        authorUserId: `telegram:${params.telegramUserId}`,
-        authorType: "user",
+        authorUserId: actorUserId,
+        authorType: actorUserId ? "user" : "system",
         body: `💬 **Phản hồi qua Telegram** (@${params.telegramUsername || params.telegramUserId}):\n\n${params.comment}`,
       })
       .returning({ id: issueComments.id });
@@ -389,8 +440,8 @@ export class AtelierTelegramTaskManager {
           reason: "issue_commented",
           mutation: "telegram.comment",
           contextSource: "telegram.task.comment",
-          requestedByActorType: "user",
-          requestedByActorId: `telegram:${params.telegramUserId}`,
+          requestedByActorType: actorUserId ? "user" : "system",
+          requestedByActorId: actorUserId,
           taskKey: taskData.issue.identifier,
           wakeCommentId: createdComment?.id ?? null,
         });
@@ -446,6 +497,11 @@ export class AtelierTelegramTaskManager {
 
     if (!existing) return false;
 
+    const actorUserId = await this.resolveTelegramActorUserId(
+      existing.companyId,
+      params.telegramUserId,
+    );
+
     const note = `${params.decisionNote} (bởi Telegram @${params.telegramUsername || params.telegramUserId})`;
 
     await this.db
@@ -453,7 +509,7 @@ export class AtelierTelegramTaskManager {
       .set({
         status: params.decision,
         decisionNote: note,
-        decidedByUserId: `telegram:${params.telegramUserId}`,
+        decidedByUserId: actorUserId,
         decidedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -472,6 +528,10 @@ export class AtelierTelegramTaskManager {
     if (!taskData) return null;
 
     const { issue } = taskData;
+    const actorUserId = await this.resolveTelegramActorUserId(
+      issue.companyId,
+      telegramUserId,
+    );
     await this.db
       .update(issues)
       .set({
@@ -483,8 +543,8 @@ export class AtelierTelegramTaskManager {
     await this.db.insert(issueComments).values({
       companyId: issue.companyId,
       issueId: issue.id,
-      authorUserId: `telegram:${telegramUserId}`,
-      authorType: "user",
+      authorUserId: actorUserId,
+      authorType: actorUserId ? "user" : "system",
       body: `🚫 **Công việc đã bị hủy** bởi người dùng qua Telegram.`,
     });
 

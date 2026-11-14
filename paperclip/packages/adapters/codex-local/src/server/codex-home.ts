@@ -253,6 +253,17 @@ async function createExpectedSymlink(target: string, source: string): Promise<vo
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST" && await isExpectedSymlink(target, source)) return;
+    // Creating symlinks on Windows normally requires Developer Mode or an
+    // elevated process. Local-trusted Paperclip must still be able to launch
+    // Codex agents from a regular terminal, so refresh a private copy from the
+    // authoritative shared home when Windows rejects the link. ensureSymlink
+    // calls this on every run, preventing the managed copy from becoming a
+    // permanently stale credential.
+    if (process.platform === "win32" && (code === "EPERM" || code === "EACCES")) {
+      await fs.copyFile(source, target);
+      await fs.chmod(target, 0o600).catch(() => undefined);
+      return;
+    }
     throw error;
   }
 }

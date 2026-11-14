@@ -39,6 +39,7 @@ export class AtelierTelegramPoller {
   private botInfo: any = null;
   private progressMonitorTimer: ReturnType<typeof setInterval> | null = null;
   private lastProgressSnapshot: string | null = null;
+  private notificationCheckRunning = false;
 
   constructor(db: Db, heartbeat?: IssueAssignmentWakeupDeps) {
     this.db = db;
@@ -1011,10 +1012,94 @@ export class AtelierTelegramPoller {
 
     if (this.progressMonitorTimer) clearInterval(this.progressMonitorTimer);
     this.progressMonitorTimer = setInterval(() => {
-      this.checkAndNotifyProgress().catch((err) => {
-        addTelegramLog("warn", "Telegram progress monitor check failed", { error: String(err) });
-      });
+      if (this.notificationCheckRunning) return;
+      this.notificationCheckRunning = true;
+      this.checkAndNotifyProgress()
+        .catch((err) => {
+          addTelegramLog("warn", "Telegram progress monitor check failed", { error: String(err) });
+        })
+        .finally(() => {
+          this.notificationCheckRunning = false;
+        });
     }, 15000);
+  }
+
+  private extractAgentReply(body: string): { needsInput: boolean; content: string } {
+    const questionSection = body.match(
+      /(?:^|\n)questions\s*\n([\s\S]*?)(?=\n(?:assumptions|handoff|status)\s*\n|$)/i,
+    );
+    const inlineQuestions = body.match(
+      /(?:^|\n)`?questions`?\s*:\s*([\s\S]*?)(?=\n`?(?:assumptions|handoff|status)`?\s*:|$)/i,
+    );
+    const needsInput =
+      /status:\s*`?needs_input`?/i.test(body) || Boolean(questionSection) || Boolean(inlineQuestions);
+    const raw = (questionSection?.[1] || inlineQuestions?.[1] || body).trim();
+    const maxLength = 3200;
+    return {
+      needsInput,
+      content: raw.length > maxLength ? `${raw.slice(0, maxLength)}\n…` : raw,
+    };
+  }
+
+  private async checkAndNotifyMappedTaskUpdates(): Promise<void> {
+    const config = getTelegramConfigSync();
+    if (!config.notificationsEnabled || !this.client.hasToken()) return;
+
+    for (const mapping of [...config.chatTaskMappings]) {
+      const task = await this.taskManager.getTaskByIdentifierOrId(mapping.issueId);
+      if (!task) continue;
+
+      const lastActivityAt = Date.parse(mapping.lastActivityAt || "1970-01-01T00:00:00.000Z");
+      const latestAgentComment = task.comments
+        .filter((comment) => {
+          const createdAt = new Date(comment.createdAt).getTime();
+          return comment.authorType === "agent" && Boolean(comment.authorAgentId) && createdAt > lastActivityAt;
+        })
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
+
+      if (!latestAgentComment) continue;
+
+      const reply = this.extractAgentReply(latestAgentComment.body);
+      const heading = reply.needsInput
+        ? `❓ **${mapping.assignedAgentName} cần bạn bổ sung cho ${mapping.issueIdentifier}**`
+        : `🤖 **${mapping.assignedAgentName} cập nhật ${mapping.issueIdentifier}**`;
+      const footer = reply.needsInput
+        ? "💬 Hãy Reply trực tiếp tin nhắn giao việc để gửi câu trả lời lại cho Agent."
+        : `Trạng thái hiện tại: \`${task.issue.status}\`.`;
+
+      try {
+        await this.client.sendMessage(
+          mapping.telegramChatId,
+          `${heading}\n\n${reply.content}\n\n${footer}`,
+          {
+            reply_to_message_id: mapping.telegramMessageId,
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [[
+                { text: `🔍 Chi tiết ${mapping.issueIdentifier}`, callback_data: `view_task:${mapping.issueId}` },
+              ]],
+            },
+          },
+        );
+
+        await recordChatTaskMapping({
+          ...mapping,
+          lastActivityAt: new Date(latestAgentComment.createdAt).toISOString(),
+        });
+        addTelegramLog("info", `Delivered Agent update for ${mapping.issueIdentifier} to Telegram`, {
+          issueId: mapping.issueId,
+          commentId: latestAgentComment.id,
+          telegramChatId: mapping.telegramChatId,
+          needsInput: reply.needsInput,
+        });
+      } catch (err: any) {
+        addTelegramLog("warn", `Could not deliver Agent update for ${mapping.issueIdentifier}`, {
+          issueId: mapping.issueId,
+          telegramChatId: mapping.telegramChatId,
+          error: String(err),
+        });
+      }
+    }
   }
 
   private async checkAndNotifyProgress(): Promise<void> {
@@ -1023,6 +1108,8 @@ export class AtelierTelegramPoller {
     const hasNotificationTargets =
       config.allowedChatIds.length > 0 || config.allowedUserIds.length > 0 || config.userPairings.length > 0;
     if (!config.notificationsEnabled || !hasNotificationTargets) return;
+
+    await this.checkAndNotifyMappedTaskUpdates();
 
     const progress = await this.taskManager.getProjectProgress();
     const snapshot = JSON.stringify(progress);
