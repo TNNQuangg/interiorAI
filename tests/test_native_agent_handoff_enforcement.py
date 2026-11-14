@@ -97,6 +97,11 @@ def test_create_project_persists_explicit_workflow_binding(tmp_path: Path, monke
 
 def test_geometry_snapshot_assignment_cannot_fall_back_to_chief(monkeypatch: pytest.MonkeyPatch):
     calls = []
+    monkeypatch.setattr(
+        adapter,
+        "get_native_project_for_scene",
+        lambda scene_id, company_id: {"scene_id": scene_id, "native_project_id": "paperclip-project-1", "company_id": company_id},
+    )
 
     def fake_request(method, path, payload=None):
         calls.append((method, path, payload))
@@ -129,4 +134,43 @@ def test_geometry_snapshot_assignment_cannot_fall_back_to_chief(monkeypatch: pyt
     assert issue_payload["assigneeAgentId"] == "native-geometry"
     assert issue_payload["assigneeAgentId"] != "native-chief"
     assert "Agent assignment: agent_geometry" in issue_payload["description"]
+
+
+def test_native_task_refuses_unlinked_scene_before_project_lookup(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(adapter, "get_native_project_for_scene", lambda *_args: None)
+    monkeypatch.setattr(adapter, "_request_json", lambda *_args, **_kwargs: pytest.fail("Paperclip must not be called"))
+    with pytest.raises(adapter.PaperclipTaskError, match="mapping not found"):
+        adapter.resolve_project("scene-unlinked", "company-1")
+
+
+def test_native_task_includes_verified_predecessor_provenance(monkeypatch: pytest.MonkeyPatch):
+    calls = []
+    monkeypatch.setattr(
+        adapter,
+        "get_native_project_for_scene",
+        lambda scene_id, company_id: {"scene_id": scene_id, "native_project_id": "paperclip-project-1", "company_id": company_id},
+    )
+
+    def fake_request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if method == "GET" and path.startswith("/api/atelier/agent-capabilities"):
+            return {"company_id": "company-1", "agents": [{"agentId": "native-geometry", "atelierAgentKey": "agent_geometry", "available": True, "lifecycleState": "ready"}]}
+        if method == "GET" and path == "/api/companies/company-1/projects":
+            return [{"id": "paperclip-project-1"}]
+        if method == "POST" and path == "/api/companies/company-1/issues":
+            return {"id": "geometry-task", "status": "todo"}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(adapter, "_request_json", fake_request)
+    adapter.create_native_task(
+        run_id="run-native",
+        project_id="proj_bedroom",
+        node={"id": "geometry", "type": "pascal_geometry"},
+        local_agent_id="agent_geometry",
+        task_description="Build geometry",
+        predecessor_handoffs=["C:/data/runs/run-native/handoffs/floorplan.md"],
+        predecessor_artifacts=[{"node_id": "floorplan", "artifacts": [{"artifact_id": "art-floor", "sha256": "abc"}]}],
+        idempotency_key="run-native:geometry:native",
+    )
+    assert '"artifact_id": "art-floor"' in calls[-1][2]["description"]
 

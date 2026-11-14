@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.db import (
@@ -106,6 +106,7 @@ from app.services.inventory_bom import generate_project_inventory_bom, export_in
 from app.services import ide_bridge_service
 from app.services.blender_mcp import (
     build_and_verify_blender_scene,
+    build_project_credits_report,
     cancel_render_job,
     enqueue_render_job,
     generate_custom_furniture_glb,
@@ -150,7 +151,7 @@ from app.services.orchestrator import (
     test_ai_connection,
 )
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 UPLOADS_DIR = ROOT_DIR / "data" / "uploads"
 
 
@@ -468,6 +469,88 @@ async def api_update_surfaces(project_id: str, body: SurfaceUpdatePayload):
         proj.pascal_scene_json = sync_res["sceneJson"]
 
     saved = save_project(proj, author="Style & Surface Engine (7B)", reason="Cập nhật vật liệu Sơn/Gạch bề mặt", bump_revision=True)
+    return {
+        "ok": True,
+        "invalidated_nodes": invalidated_nodes,
+        "geometry_rebuilt": False,
+        "project": saved.model_dump(),
+    }
+
+
+class ProjectMaterialsUpdatePayload(BaseModel):
+    """Material-only update payload that preserves existing geometry and measurements."""
+
+    active_style_preset: Optional[str] = None
+    surface_material_overrides: Optional[Dict[str, MaterialOverride]] = None
+    rooms: Optional[List[Dict[str, Any]]] = None
+    walls: Optional[List[Dict[str, Any]]] = None
+    furniture_instances: Optional[List[Dict[str, Any]]] = None
+    reason: str = "Cập nhật vật liệu PBR & phong cách"
+    bump_revision: bool = True
+
+
+@app.post("/api/v1/projects/{project_id}/materials")
+async def api_update_project_materials(project_id: str, body: ProjectMaterialsUpdatePayload):
+    """Update only PBR materials, surface overrides, and style preset without modifying geometry."""
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Không tìm thấy dự án")
+
+    if body.active_style_preset is not None:
+        proj.active_style_preset = body.active_style_preset
+    if body.surface_material_overrides is not None:
+        merged_overrides = dict(proj.surface_material_overrides or {})
+        merged_overrides.update(body.surface_material_overrides)
+        proj.surface_material_overrides = merged_overrides
+
+    if body.rooms:
+        room_patch_by_id = {str(r.get("id")): r for r in body.rooms if r.get("id")}
+        for rm in proj.rooms:
+            patch = room_patch_by_id.get(rm.id)
+            if not patch:
+                continue
+            for field in ("floor_material_id", "wall_base_material_id", "ceiling_material_id", "skirting_material_id"):
+                if patch.get(field) is not None:
+                    setattr(rm, field, str(patch[field]))
+
+    if body.walls:
+        wall_patch_by_id = {str(w.get("id")): w for w in body.walls if w.get("id")}
+        for wl in proj.walls:
+            patch = wall_patch_by_id.get(wl.id)
+            if not patch:
+                continue
+            for field in ("face_a_material_id", "face_b_material_id"):
+                if patch.get(field) is not None:
+                    setattr(wl, field, str(patch[field]))
+
+    if body.furniture_instances:
+        furn_patch_by_id = {str(f.get("id")): f for f in body.furniture_instances if f.get("id")}
+        for furn in proj.furniture_instances:
+            patch = furn_patch_by_id.get(furn.id)
+            if not patch:
+                continue
+            if isinstance(patch.get("part_materials"), dict):
+                furn.part_materials = {str(k): str(v) for k, v in patch["part_materials"].items()}
+            if patch.get("color_hex") is not None:
+                furn.color_hex = str(patch["color_hex"])
+            if isinstance(patch.get("material_overrides"), dict):
+                furn.material_overrides = {
+                    str(k): (v if isinstance(v, MaterialOverride) else MaterialOverride(**v))
+                    for k, v in patch["material_overrides"].items()
+                }
+
+    proj.estimate_snapshot = calculate_project_estimate(proj)
+    invalidated_nodes = mark_workflow_invalidation("surface_material_change")
+    sync_res = await sync_canonical_to_pascal(proj)
+    if sync_res.get("ok") and sync_res.get("sceneJson"):
+        proj.pascal_scene_json = sync_res["sceneJson"]
+
+    saved = save_project(
+        proj,
+        author="Material & Style Engine",
+        reason=body.reason,
+        bump_revision=body.bump_revision,
+    )
     return {
         "ok": True,
         "invalidated_nodes": invalidated_nodes,
@@ -969,6 +1052,11 @@ def api_catalog_fit_check(body: FitCheckPayload):
     product = next((p for p in catalog if p["sku"] == body.sku), None)
     if not product:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm {body.sku}")
+    if not product.get("pascal_asset_id"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Sản phẩm {body.sku} thiếu pascal_asset_id; không thể thay bằng asset sofa mặc định",
+        )
     return check_catalog_product_fit(proj, product, body.replace_furniture_id)
 
 
@@ -981,6 +1069,11 @@ async def api_catalog_replace_in_scene(body: FitCheckPayload):
     product = next((p for p in catalog if p["sku"] == body.sku), None)
     if not product:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm {body.sku}")
+    if not product.get("pascal_asset_id"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Sản phẩm {body.sku} thiếu pascal_asset_id; không thể thay bằng asset sofa mặc định",
+        )
 
     fit = check_catalog_product_fit(proj, product, body.replace_furniture_id)
     target_id = fit.get("target_furniture_id")
@@ -1000,7 +1093,7 @@ async def api_catalog_replace_in_scene(body: FitCheckPayload):
         rotation_deg=90.0 if product["category"] == "sofa" else 0.0,
         color_hex=product.get("color_hex", "#D9D2C5"),
         price_vnd=float(product["price_vnd"]),
-        pascal_asset_id=product.get("pascal_asset_id", "sofa"),
+        pascal_asset_id=product["pascal_asset_id"],
         source_url=product.get("source_url"),
         vendor=product.get("vendor"),
     )
@@ -1928,7 +2021,7 @@ class RetryRenderJobPayload(BaseModel):
     wait_for_completion: Optional[bool] = None
 
 
-VALID_RENDER_CAMERAS = {"eye_level", "corner", "detail_sofa", "wide", "top", "cutaway", "walk", "orbit"}
+VALID_RENDER_CAMERAS = {"dollhouse", "eye_level", "corner", "detail_sofa", "wide", "top", "cutaway", "walk", "orbit"}
 
 
 @app.get("/api/v1/render/capabilities")
@@ -2176,9 +2269,34 @@ def api_download_render_job_image(job_id: str):
 def api_get_rendered_image(filename: str):
     file_path = ROOT_DIR / "data" / "exports" / "renders" / filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Không tìm thấy ảnh kết xuất")
-    return FileResponse(path=str(file_path), filename=filename, media_type="image/png")
-    create_atelier_room,
-    get_native_project_workspace,
-    initialize_native_project_link,
-    link_scene_to_native_project,
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp kết xuất")
+    suffix = file_path.suffix.lower()
+    media_type = (
+        "application/json"
+        if suffix == ".json"
+        else ("text/markdown; charset=utf-8" if suffix == ".md" else "image/png")
+    )
+    return FileResponse(path=str(file_path), filename=filename, media_type=media_type)
+
+
+@app.get("/api/v1/projects/{project_id}/credits")
+def api_get_project_credits(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Không tìm thấy dự án")
+    return build_project_credits_report(proj)
+
+
+@app.get("/api/v1/projects/{project_id}/credits.md")
+def api_get_project_credits_markdown(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Không tìm thấy dự án")
+    report = build_project_credits_report(proj)
+    return PlainTextResponse(report["markdown"], media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/api/v1/credits")
+def api_get_default_credits():
+    proj = get_project("proj_demo_4x5m") or build_default_demo_project()
+    return build_project_credits_report(proj)

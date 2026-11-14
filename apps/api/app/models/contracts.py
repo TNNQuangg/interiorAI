@@ -248,6 +248,7 @@ class FurnitureInstance(BaseModel):
     normalized_glb: Optional[str] = None
     material_slots: List[MaterialSlotDefinition] = Field(default_factory=list)
     material_overrides: Dict[str, MaterialOverride] = Field(default_factory=dict)
+    part_materials: Dict[str, str] = Field(default_factory=dict)
     sizing_policy: Literal["FIXED_SIZE", "UNIFORM_SCALABLE", "PARAMETRIC"] = "FIXED_SIZE"
     uniform_scale_range: List[float] = Field(default_factory=lambda: [1.0, 1.0])
     original_dimensions_mm: List[float] = Field(default_factory=list)
@@ -469,6 +470,7 @@ class CanonicalProject(BaseModel):
     furniture_instances: List[FurnitureInstance] = Field(default_factory=list)
     dimension_chains: List[DimensionChain] = Field(default_factory=list)
     surface_material_overrides: Dict[str, MaterialOverride] = Field(default_factory=dict)
+    active_style_preset: Optional[str] = None
     design_brief: DesignBrief = Field(default_factory=DesignBrief)
     estimate_snapshot: Optional[CostEstimateSnapshot] = None
     pascal_scene_json: Dict[str, Any] = Field(default_factory=dict)

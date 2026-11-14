@@ -36,6 +36,14 @@ from PIL import Image, ImageDraw
 from app.db import get_conn, get_project, now_iso
 from app.models.contracts import CanonicalProject, MaterialOverride
 from app.services.asset_pipeline import ASSET_LIBRARY_DIR, ASSET_ROOT, get_asset_metadata
+from app.services.blender_cycles_renderer import (
+    build_project_credits_report,
+    generate_cycles_runner_script,
+    get_named_parts_for_furniture_py,
+    resolve_asset_pack_id,
+    resolve_furniture_asset_for_blender,
+    resolve_pbr_material_for_blender,
+)
 from app.services.material_system import get_material, list_materials, resolve_material
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
@@ -274,6 +282,8 @@ print("GLB_EXPORT_SUCCESS")
 def compute_project_material_hash(project: CanonicalProject) -> str:
     """Computes a deterministic SHA-256 hash of all scene materials, overrides, and geometry state."""
     payload = {
+        "active_style_preset": project.active_style_preset,
+        "asset_pack": resolve_asset_pack_id(project),
         "rooms": [
             {
                 "id": r.id,
@@ -283,6 +293,15 @@ def compute_project_material_hash(project: CanonicalProject) -> str:
             }
             for r in project.rooms
         ],
+        "walls": [
+            {
+                "id": w.id,
+                "face_a": w.face_a_material_id,
+                "face_b": w.face_b_material_id,
+                "is_accent": w.is_accent_wall,
+            }
+            for w in project.walls
+        ],
         "surface_overrides": {
             k: v.model_dump() for k, v in sorted(project.surface_material_overrides.items())
         },
@@ -290,10 +309,12 @@ def compute_project_material_hash(project: CanonicalProject) -> str:
             {
                 "id": f.id,
                 "asset_id": f.asset_id,
+                "normalized_glb": f.normalized_glb,
                 "geometry_hash": f.geometry_hash,
                 "color_hex": f.color_hex,
                 "pos": [round(f.x_mm, 1), round(f.y_mm, 1), round(f.z_mm, 1), round(f.rotation_deg, 1)],
                 "dims": [round(f.width_mm, 1), round(f.depth_mm, 1), round(f.height_mm, 1)],
+                "part_materials": dict(sorted((f.part_materials or {}).items())),
                 "overrides": {k: v.model_dump() for k, v in sorted(f.material_overrides.items())},
             }
             for f in project.furniture_instances
@@ -394,12 +415,38 @@ def _compute_camera_spec(project: CanonicalProject, camera_id: str) -> Dict[str,
     sofa_z = ((sofa.z_mm + sofa.height_mm * 0.45) / 1000.0) if sofa else 0.65
 
     cam_key = (camera_id or "eye_level").lower().strip()
+    if cam_key in {"dollhouse", "cutaway"}:
+        patio_depth = min(2.15, max(1.55, span_y * 0.44))
+        target_x = cx
+        target_y = cy + patio_depth * 0.25
+        target_z = 0.42
+        max_span = max(span_x, span_y + patio_depth * 0.65)
+        horiz_dist = max_span * 2.08
+        tilt_rad = math.radians(42.5)
+        yaw_rad = math.radians(45.0)
+        eye_x = target_x + horiz_dist * math.cos(yaw_rad)
+        eye_y = target_y + horiz_dist * math.sin(yaw_rad)
+        eye_z = target_z + horiz_dist * math.tan(tilt_rad)
+        return {
+            "camera_id": cam_key,
+            "preset_name": "Nhà búp bê cắt tường (Dollhouse Cutaway)",
+            "is_dollhouse": True,
+            "wall_cut_height_m": 1.12,
+            "tilt_deg": 42.5,
+            "yaw_deg": 45.0,
+            "eye_m": [round(eye_x, 3), round(eye_y, 3), round(eye_z, 3)],
+            "target_m": [round(target_x, 3), round(target_y, 3), round(target_z, 3)],
+            "lens_mm": 64.0,
+            "hide_ceiling": True,
+        }
     if cam_key in {"perspective", "eye_level", "front"}:
         return {
             "camera_id": cam_key,
-            "eye_m": [round(cx + span_x * 0.32, 3), round(min_y + span_y * 0.12, 3), 1.52],
-            "target_m": [round(sofa_x * 0.65 + cx * 0.35, 3), round(sofa_y * 0.65 + cy * 0.35, 3), 0.78],
-            "lens_mm": 28.0,
+            "preset_name": "Nội thất ngang tầm mắt (Eye-Level 1.50m, 26mm)",
+            "is_dollhouse": False,
+            "eye_m": [round(min_x + span_x * 0.50, 3), round(max_y - span_y * 0.14, 3), 1.50],
+            "target_m": [round(cx, 3), round(cy - span_y * 0.08, 3), 0.78],
+            "lens_mm": 26.0,
             "hide_ceiling": False,
         }
     if cam_key == "corner":
@@ -563,6 +610,16 @@ def build_scene_bridge_manifest(
                 "grout_color": "#B8B1A6",
             }
 
+    # Resolve primary floor PBR material from pbr_catalog.json
+    floor_ov_obj = project.surface_material_overrides.get("floor")
+    primary_floor_mat_id = (
+        floor_ov_obj.material_id
+        if floor_ov_obj and floor_ov_obj.material_id
+        else (project.rooms[0].floor_material_id if project.rooms else "pbr_floor_oak_light")
+    )
+    primary_floor_tint = floor_ov_obj.tint if (floor_ov_obj and floor_ov_obj.tint) else None
+    floor_pbr_entry = resolve_pbr_material_for_blender(primary_floor_mat_id, "floor", tint_override=primary_floor_tint)
+
     category_default_assets = {
         "sofa": "asset_ph_sofa_01_1k",
         "coffee_table": "asset_ph_modern_coffee_table_02_1k",
@@ -573,18 +630,40 @@ def build_scene_bridge_manifest(
         "chair": "asset_ph_modern_arm_chair_01_1k",
     }
 
+    active_pack_id = resolve_asset_pack_id(project)
     furniture_bridge: List[Dict[str, Any]] = []
     for furn in project.furniture_instances:
-        glb_disk_path: Optional[str] = None
+        f_dict = furn.model_dump()
+        sh3d_resolved = resolve_furniture_asset_for_blender(f_dict, pack_id=active_pack_id)
+        glb_disk_path: Optional[str] = sh3d_resolved.get("glb_disk_path")
+        catalog_entry: Optional[Dict[str, Any]] = sh3d_resolved.get("catalog_entry")
+        parametric_type: Optional[str] = sh3d_resolved.get("parametric_type")
+
         asset_meta_dict: Optional[Dict[str, Any]] = None
-        effective_asset_id = furn.asset_id or category_default_assets.get(furn.category.lower())
-        if effective_asset_id:
+        effective_asset_id = (
+            (catalog_entry["slug"] if catalog_entry else None)
+            or furn.asset_id
+            or category_default_assets.get(furn.category.lower())
+        )
+        if not glb_disk_path and effective_asset_id:
             candidate = ASSET_LIBRARY_DIR / effective_asset_id / "normalized.glb"
             if candidate.is_file():
                 glb_disk_path = str(candidate.resolve())
             meta = get_asset_metadata(effective_asset_id)
             if meta:
                 asset_meta_dict = meta.model_dump()
+
+        # Resolve per-part PBR materials from pbr_catalog.json
+        named_parts = get_named_parts_for_furniture_py(f_dict)
+        part_pbr_materials: Dict[str, Any] = {}
+        part_materials_raw = dict(furn.part_materials or {})
+        for part_spec in named_parts:
+            pid = part_spec["partId"]
+            stype = part_spec["surfaceType"]
+            assigned_mat_id = part_materials_raw.get(pid) or part_materials_raw.get("all")
+            part_pbr_materials[pid] = resolve_pbr_material_for_blender(assigned_mat_id, stype)
+        if "body" not in part_pbr_materials:
+            part_pbr_materials["body"] = resolve_pbr_material_for_blender(part_materials_raw.get("body"), "wood")
 
         resolved_slot_overrides: Dict[str, Any] = {}
         for slot_key, ov in furn.material_overrides.items():
@@ -597,16 +676,24 @@ def build_scene_bridge_manifest(
         if not active_slots and asset_meta_dict:
             active_slots = asset_meta_dict.get("material_slots", [])
 
+        search_tokens = " ".join(
+            str(x) for x in (furn.category, furn.asset_id, furn.name, furn.id) if x
+        )
+
         furniture_bridge.append(
             {
                 "id": furn.id,
                 "sku": furn.sku,
                 "name": furn.name,
                 "category": furn.category,
+                "search_tokens": search_tokens,
                 "room_id": furn.room_id,
                 "asset_id": effective_asset_id,
                 "geometry_hash": furn.geometry_hash or (asset_meta_dict.get("geometry_hash") if asset_meta_dict else None),
                 "glb_disk_path": glb_disk_path,
+                "parametric_type": parametric_type,
+                "catalog_entry": catalog_entry,
+                "flagged_unmapped": bool(sh3d_resolved.get("flagged_unmapped", False)),
                 "asset_metadata": asset_meta_dict,
                 "dimensions_mm": [furn.width_mm, furn.depth_mm, furn.height_mm],
                 "dimensions_m": [
@@ -624,9 +711,14 @@ def build_scene_bridge_manifest(
                     "x_m": round(furn.x_mm / 1000.0, 4),
                     "y_m": round(furn.y_mm / 1000.0, 4),
                     "z_m": round(furn.z_mm / 1000.0, 4),
-                    "rotation_rad": round(math.radians(furn.rotation_deg), 6),
+                    # glTF Y-up imports into Blender Z-up with +Z_gltf mapped to -Y_blender;
+                    # offset by +pi so rotation_deg aligns with StudioViewport.tsx & SceneGraph.
+                    "rotation_rad": round(math.pi - math.radians(furn.rotation_deg), 6),
                 },
                 "color_hex": furn.color_hex,
+                "named_parts": named_parts,
+                "part_materials_raw": part_materials_raw,
+                "part_pbr_materials": part_pbr_materials,
                 "material_slots": active_slots,
                 "material_overrides_raw": {k: v.model_dump() for k, v in furn.material_overrides.items()},
                 "material_overrides_resolved": resolved_slot_overrides,
@@ -681,17 +773,67 @@ def build_scene_bridge_manifest(
 
     camera_spec = _compute_camera_spec(project, camera)
 
+    rooms_payload = []
+    for r in project.rooms:
+        r_dump = r.model_dump()
+        r_mat_id = (
+            floor_ov_obj.material_id
+            if (floor_ov_obj and floor_ov_obj.material_id)
+            else r.floor_material_id
+        )
+        r_dump["resolved_floor_pbr"] = resolve_pbr_material_for_blender(
+            r_mat_id, "floor", tint_override=primary_floor_tint
+        )
+        rooms_payload.append(r_dump)
+
+    wall_ov_obj = project.surface_material_overrides.get("wall")
+    walls_payload = []
+    for w in project.walls:
+        w_dump = w.model_dump()
+        fa_id = (
+            w.face_a_material_id
+            or (wall_ov_obj.material_id if wall_ov_obj else None)
+            or (project.rooms[0].wall_base_material_id if project.rooms else None)
+            or "pbr_wall_plaster_warm"
+        )
+        raw_fb = w.face_b_material_id
+        if camera_spec.get("is_dollhouse") and (not raw_fb or raw_fb == "paint_warm_white"):
+            fb_id = "pbr_wall_wood_slat_oak"
+        else:
+            fb_id = raw_fb or fa_id
+        w_dump["resolved_face_a_pbr"] = resolve_pbr_material_for_blender(fa_id, "wall")
+        w_dump["resolved_face_b_pbr"] = resolve_pbr_material_for_blender(fb_id, "wall")
+        walls_payload.append(w_dump)
+
+    dollhouse_tray = {
+        "grass_pbr": {
+            "id": "pbr_tray_grass",
+            "name": "Cỏ sân vườn (Poly Haven Leafy Grass CC0)",
+            "surface_type": "floor",
+            "base_color": "#7BB342",
+            "roughness": 0.88,
+            "metalness": 0.0,
+            "repeat_scale_m": [0.9, 0.9],
+            "diffuse_path": str((ROOT_DIR / "paperclip" / "ui" / "public" / "assets" / "pbr" / "grass" / "diffuse.jpg").resolve()),
+            "roughness_path": str((ROOT_DIR / "paperclip" / "ui" / "public" / "assets" / "pbr" / "grass" / "roughness.jpg").resolve()),
+            "normal_path": str((ROOT_DIR / "paperclip" / "ui" / "public" / "assets" / "pbr" / "grass" / "normal.jpg").resolve()),
+        },
+        "patio_pbr": resolve_pbr_material_for_blender("pbr_floor_oak_light", "floor"),
+    }
+
     return {
-        "schema_version": "atelier.scene_bridge.v1",
+        "schema_version": "atelier.scene_bridge.v2",
         "project_id": project.project_id,
         "project_name": project.name,
         "revision": project.revision,
+        "active_style_preset": project.active_style_preset,
+        "asset_pack": active_pack_id,
         "material_hash": material_hash,
         "exported_at": _utc_iso(),
         "pascal_geometry": {
             "units": "mm",
-            "rooms": [r.model_dump() for r in project.rooms],
-            "walls": [w.model_dump() for w in project.walls],
+            "rooms": rooms_payload,
+            "walls": walls_payload,
             "openings": [d.model_dump() for d in project.openings],
             "windows": [win.model_dump() for win in project.windows],
         },
@@ -701,6 +843,8 @@ def build_scene_bridge_manifest(
             k: v.model_dump() for k, v in project.surface_material_overrides.items()
         },
         "floor_material_resolved": floor_override_resolved,
+        "floor_pbr_entry": floor_pbr_entry,
+        "dollhouse_tray": dollhouse_tray,
         "tile_textures": tile_textures,
         "camera": camera_spec,
         "lights": lighting_spec,
@@ -713,12 +857,14 @@ def build_scene_bridge_manifest(
 def _generate_blender_runner_script() -> str:
     """
     Returns the Python script executed inside headless Blender 4.2 LTS.
-    It reads `scene_bridge_manifest.json`, constructs the exact Pascal geometry,
-    imports all GLB furniture assets, builds Principled BSDF materials from the
-    Canonical Material Definitions & Material Overrides, saves the `.blend` file,
-    verifies object counts/transforms/dimensions/materials (`scene_verification.json`),
-    and optionally renders with Cycles (`output.png`).
+    Delegates to `generate_cycles_runner_script()` which builds the full polygonal
+    SceneGraph, 36-item sh3d-classic GLB catalog, parametric items, and per-part
+    Poly Haven CC0 PBR materials (`pbr_catalog.json`).
     """
+    return generate_cycles_runner_script()
+
+
+def _legacy_generate_blender_runner_script() -> str:
     return r'''
 import bpy
 import bmesh
@@ -1772,8 +1918,14 @@ def _run_render_job_worker(job_id: str, simulate_delay_ms: int = 0, force_invali
     runner_script_path.write_text(_generate_blender_runner_script(), encoding="utf-8")
     log_path = job_dir / "blender_render.log"
 
-    file_name = f"{project.project_id}_rev{project.revision}_{camera_id}_{mode}_{job['material_hash'][:8]}_{job_id[-6:]}.png"
+    file_stem = f"{project.project_id}_rev{project.revision}_{camera_id}_{mode}_{job['material_hash'][:8]}_{job_id[-6:]}"
+    file_name = f"{file_stem}.png"
     out_png_path = RENDERS_DIR / file_name
+    is_dollhouse = bool(manifest.get("camera", {}).get("is_dollhouse", False))
+    transparent_file_name = f"{file_stem}_transparent.png" if is_dollhouse else None
+    transparent_png_path = (RENDERS_DIR / transparent_file_name) if transparent_file_name else None
+    metadata_file_name = f"{file_stem}_metadata.json"
+    metadata_json_path = RENDERS_DIR / metadata_file_name
 
     if simulate_delay_ms > 0:
         for _ in range(max(1, simulate_delay_ms // 100)):
@@ -1805,6 +1957,7 @@ def _run_render_job_worker(job_id: str, simulate_delay_ms: int = 0, force_invali
         str(height_px),
         str(samples),
         str(seed),
+        str(transparent_png_path) if transparent_png_path else "NONE",
     ]
 
     t0 = time.perf_counter()
@@ -1865,6 +2018,41 @@ def _run_render_job_worker(job_id: str, simulate_delay_ms: int = 0, force_invali
     image_sha256 = hashlib.sha256(out_png_path.read_bytes()).hexdigest()
     render_url = f"/api/v1/renders/{file_name}"
     download_url = f"/api/v1/render-jobs/{job_id}/download"
+    transparent_render_url = (
+        f"/api/v1/renders/{transparent_file_name}"
+        if (transparent_png_path and transparent_png_path.is_file() and transparent_png_path.stat().st_size > 1000)
+        else None
+    )
+    metadata_url = f"/api/v1/renders/{metadata_file_name}"
+
+    # Auto-generate project CREDITS.md and collect materials/models used for companion metadata JSON
+    credits_report = build_project_credits_report(project)
+    metadata_doc = {
+        "job_id": job_id,
+        "project_id": project.project_id,
+        "project_name": project.name,
+        "revision": project.revision,
+        "active_style_preset": project.active_style_preset,
+        "material_hash": job["material_hash"],
+        "rendered_at": _utc_iso(),
+        "renderer": "BLENDER_CYCLES",
+        "blender_version": verification.get("blender_version", "4.2.3 LTS"),
+        "compute_device": verification.get("compute_device_used", "GPU_CUDA"),
+        "tone_mapping": "AgX",
+        "denoiser": "OpenImageDenoise",
+        "camera": manifest.get("camera", {}),
+        "resolution": [width_px, height_px],
+        "mode": mode,
+        "samples": samples,
+        "render_url": render_url,
+        "transparent_render_url": transparent_render_url,
+        "image_sha256": image_sha256,
+        "materials_used": credits_report.get("materials_in_scene", []),
+        "cc_by_models_used": credits_report.get("cc_by_models_in_scene", []),
+        "cc_0_models_used": credits_report.get("cc_0_models_in_scene", []),
+        "credits_url": f"/api/v1/projects/{project.project_id}/credits",
+    }
+    metadata_json_path.write_text(json.dumps(metadata_doc, indent=2, ensure_ascii=False), encoding="utf-8")
 
     job.update(
         {
@@ -1875,6 +2063,15 @@ def _run_render_job_worker(job_id: str, simulate_delay_ms: int = 0, force_invali
             "out_path": str(out_png_path),
             "render_url": render_url,
             "image_url": render_url,
+            "transparent_file_name": transparent_file_name if transparent_render_url else None,
+            "transparent_out_path": str(transparent_png_path) if transparent_render_url else None,
+            "transparent_render_url": transparent_render_url,
+            "metadata_file_name": metadata_file_name,
+            "metadata_out_path": str(metadata_json_path),
+            "metadata_url": metadata_url,
+            "credits_url": f"/api/v1/projects/{project.project_id}/credits",
+            "materials_used": credits_report.get("materials_in_scene", []),
+            "cc_by_models_used": credits_report.get("cc_by_models_in_scene", []),
             "download_url": download_url,
             "file_size_bytes": out_png_path.stat().st_size,
             "image_sha256": image_sha256,
@@ -1895,6 +2092,8 @@ def _run_render_job_worker(job_id: str, simulate_delay_ms: int = 0, force_invali
                 f"- **Camera ID:** `{camera_id}`\n"
                 f"- **Material Hash:** `{job['material_hash']}`\n"
                 f"- **Tệp ảnh:** `{render_url}`\n"
+                f"- **Ảnh nền trong suốt:** `{transparent_render_url or 'N/A'}`\n"
+                f"- **Metadata JSON:** `{metadata_url}`\n"
                 f"- **Nhãn bắt buộc:** *{REQUIRED_WATERMARK}*"
             ),
         }

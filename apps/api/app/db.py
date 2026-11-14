@@ -930,6 +930,88 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
 ]
 
 
+EIGHT_AGENT_PROFILES: Dict[str, Dict[str, Any]] = {
+    "agent_chief_architect": {
+        "version": "2.0.0",
+        "skills": ["brief.synthesize", "workflow.route", "decision.ledger", "handoff.audit"],
+        "system_prompt": (
+            "Điều phối workflow snapshot và Design Brief; chỉ giao việc theo edges, không làm thay agent chuyên môn. "
+            "Chỉ hỏi dữ liệu bắt buộc của node hiện tại, giữ các nhánh độc lập tiếp tục và tổng hợp kết quả sau QA."
+        ),
+    },
+    "agent_floorplan": {
+        "version": "2.0.0",
+        "skills": [
+            "floorplan.source_identity", "floorplan.scale_calibration", "floorplan.wall_topology",
+            "floorplan.opening_recognition", "floorplan.furniture_anchoring", "floorplan.overlay_audit",
+        ],
+        "system_prompt": (
+            "Chuyên gia Floorplan. Đọc PNG/JPG/PDF/DXF và xuất Floorplan Contract; nguồn phải có SHA-256. "
+            "Hệ tọa độ bắt buộc: gốc góc trong trên-trái, x sang phải, y xuống dưới, mm. "
+            "Mỗi phòng, tường, cửa, cửa sổ và neo nội thất phải có nguồn cùng trạng thái CONFIRMED/INFERRED/UNKNOWN. "
+            "Nội thất có vị trí trên bản vẽ phải dùng wall_id + align + offset, không auto-layout. "
+            "Không dựng 3D và không biến UNKNOWN thành số thi công. Kết quả đặt tại result.floorplan_contract."
+        ),
+        "allowed_mcp_tools": ["get_scene_info", "verify_scene", "floorplan_overlay", "floorplan_measure"],
+    },
+    "agent_geometry": {
+        "version": "2.0.0",
+        "skills": ["scenegraph.build", "wall.opening_cut", "parametric.furniture", "scene.revision", "geometry.verify"],
+        "system_prompt": (
+            "Chỉ dựng từ Floorplan Contract đã PASS QA. Giữ nguyên hệ tọa độ x→x, y→z và chiều cao→y; "
+            "dựng tường/sàn/cửa/cửa sổ thật, không dùng hộp chung hoặc sofa fallback. "
+            "INFERRED được phép cho concept và phải PROVISIONAL; không tự đổi vị trí neo nội thất."
+        ),
+    },
+    "agent_style": {
+        "version": "2.0.0",
+        "skills": ["style.palette", "material.pbr", "surface.schedule", "material.provenance"],
+        "system_prompt": (
+            "Chọn bảng màu, vật liệu bề mặt và thông số PBR mà không đổi hình học. "
+            "Thiếu mã sản phẩm không được chặn concept; ghi PROVISIONAL/UNVERIFIED và nguồn cần xác minh."
+        ),
+    },
+    "agent_furniture": {
+        "version": "2.0.0",
+        "skills": ["furniture.parametric", "furniture.wall_anchor", "clearance.audit", "door_swing.audit", "collision.audit"],
+        "system_prompt": (
+            "Giữ các vị trí đã được Floorplan neo vào tường; chỉ kiểm tra và dựng đúng category/kích thước. "
+            "Không Smart Fit hoặc Auto Layout khi bản vẽ đã chỉ định. Kiểm tra lối đi, cung cửa, cửa sổ và va chạm."
+        ),
+    },
+    "agent_cost": {
+        "version": "2.0.0",
+        "skills": ["specification.schedule", "catalog.fit", "boq.quantity", "cost.deterministic", "price.provenance"],
+        "system_prompt": (
+            "Gộp Specification, Catalog fit và Cost. Mọi dòng phải truy về object_id; giá phải có nguồn/ngày. "
+            "Thiếu giá vẫn hoàn thành bản concept bằng coverage và UNVERIFIED, không bịa giá và không chặn Render."
+        ),
+    },
+    "agent_render": {
+        "version": "2.0.0",
+        "skills": ["camera.compose", "lighting.design", "material.render", "blender.cycles", "render.persistence"],
+        "system_prompt": (
+            "Chịu trách nhiệm camera, ánh sáng, vật liệu render và Blender Cycles; không có Lighting Agent riêng. "
+            "Không thêm/bớt/di chuyển vật thể; lưu camera, revision, seed, engine và ảnh vào Render Gallery."
+        ),
+    },
+    "agent_qa": {
+        "version": "2.0.0",
+        "skills": ["floorplan.contract_qa", "geometry.compare", "render.compare", "artifact.integrity", "gate.grade"],
+        "system_prompt": (
+            "QA độc lập, chỉ kiểm tra và báo PASS/FAIL. Trước Geometry phải kiểm Floorplan Contract, wall/opening/anchor refs, "
+            "polygon, scale và nguồn đo; ghi result.floorplan_validation. Cuối workflow kiểm SceneGraph, render và provenance. "
+            "Không tự sửa scene và không tự phê duyệt quyết định người dùng."
+        ),
+    },
+}
+
+for _agent_profile in DEFAULT_AGENTS:
+    _override = EIGHT_AGENT_PROFILES.get(_agent_profile["agent_id"])
+    if _override:
+        _agent_profile.update(_override)
+
+
 DEFAULT_CONNECTIONS: List[Dict[str, Any]] = [
     {
         "connection_id": "conn_pascal_mcp",
@@ -1027,40 +1109,35 @@ DEFAULT_CONNECTIONS: List[Dict[str, Any]] = [
 
 DEFAULT_WORKFLOW: Dict[str, Any] = {
     "workflow_id": "wf_default_interior_pipeline",
-    "name": "Quy Trình Thiết Kế Nội Thất Đa Agent Chuẩn (14 Nodes)",
-    "version": 1,
-    "description": "Luồng phối hợp từ nhập bản vẽ 2D, hỏi đáp gia chủ, dựng 3D Pascal MCP, bố trí nội thất, phối màu sơn/gạch đến bóc tách dự toán và xuất CAD.",
+    "name": "ATELIER — Workflow Nội Thất 8 Agent",
+    "version": 3,
+    "description": "Luồng 8 agent: Brief, Floorplan chính xác, QA mặt bằng, Geometry, Style/Furniture song song, Cost & Specification, Render và QA độc lập.",
     "nodes": [
-        {"id": "n1_intake", "type": "input_intake", "label": "1. Nhập Mặt Bằng & Nhu Cầu", "agent_id": "agent_chief_architect", "position": {"x": 40, "y": 140}, "enabled": True, "status": "COMPLETED", "config": {"timeout_s": 30, "retry": 1}},
-        {"id": "n2_floorplan", "type": "floorplan_cv", "label": "2. Phân Tích Tường & Cửa 2D", "agent_id": "agent_floorplan", "position": {"x": 300, "y": 60}, "enabled": True, "status": "COMPLETED", "config": {"require_scale": True}},
-        {"id": "n3_scale_gate", "type": "human_gate", "label": "3. Xác Nhận Tỷ Lệ Chuẩn (mm)", "agent_id": "agent_floorplan", "position": {"x": 300, "y": 230}, "enabled": True, "status": "COMPLETED", "config": {"gate_type": "SCALE_CONFIRMATION"}},
-        {"id": "n4_brief", "type": "concierge_brief", "label": "4. Hỏi Đáp & Chốt Design Brief", "agent_id": "agent_chief_architect", "position": {"x": 570, "y": 140}, "enabled": True, "status": "COMPLETED", "config": {"allow_ask_user": True}},
-        {"id": "n5_geometry", "type": "pascal_geometry", "label": "5. Dựng Khung 3D Pascal MCP", "agent_id": "agent_geometry", "position": {"x": 840, "y": 60}, "enabled": True, "status": "COMPLETED", "config": {"mcp_server": "conn_pascal_mcp"}},
-        {"id": "n6_style", "type": "style_surface", "label": "6. Phối Sơn Tường & Gạch Sàn (7B)", "agent_id": "agent_style", "position": {"x": 840, "y": 230}, "enabled": True, "status": "COMPLETED", "config": {"apply_accent_wall": True}},
-        {"id": "n7_furniture", "type": "furniture_layout", "label": "7. Bố Trí Nội Thất Phương Án A/B", "agent_id": "agent_furniture", "position": {"x": 1110, "y": 60}, "enabled": True, "status": "COMPLETED", "config": {"min_walkway_mm": 750}},
-        {"id": "n8_clearance", "type": "collision_qa", "label": "8. Kiểm Tra Va Chạm & Lối Đi", "agent_id": "agent_furniture", "position": {"x": 1110, "y": 230}, "enabled": True, "status": "COMPLETED", "config": {"check_door_swing": True}},
-        {"id": "n9_shopping", "type": "catalog_match", "label": "9. Khớp SKU Catalog Việt Nam", "agent_id": "agent_shopping", "position": {"x": 1380, "y": 60}, "enabled": True, "status": "COMPLETED", "config": {"catalog": "catalog_vn.csv"}},
-        {"id": "n10_cost", "type": "deterministic_cost", "label": "10. Tính Dự Toán BOQ Xác Định", "agent_id": "agent_cost", "position": {"x": 1380, "y": 230}, "enabled": True, "status": "COMPLETED", "config": {"vat_rate": 0.08}},
-        {"id": "n11_approval", "type": "human_gate", "label": "11. Cổng Duyệt Phương Án & Giá", "agent_id": "agent_chief_architect", "position": {"x": 1650, "y": 140}, "enabled": True, "status": "COMPLETED", "config": {"gate_type": "PROPOSAL_APPROVAL"}},
-        {"id": "n12_render", "type": "render_gen", "label": "12. Kết Xuất Phối Cảnh Minh Họa", "agent_id": "agent_render", "position": {"x": 1920, "y": 60}, "enabled": True, "status": "READY", "config": {"lock_camera": True}},
-        {"id": "n13_render_qa", "type": "render_qa", "label": "13. Kiểm Định Chống Sai Lệch 3D", "agent_id": "agent_qa", "position": {"x": 1920, "y": 230}, "enabled": True, "status": "READY", "config": {"strict_geometry": True}},
-        {"id": "n14_export", "type": "cad_export", "label": "14. Xuất Hồ Sơ DXF / GLB / IFC / BOQ", "agent_id": "agent_geometry", "position": {"x": 2190, "y": 140}, "enabled": True, "status": "READY", "config": {"formats": ["dxf", "glb", "ifc", "dae", "xlsx"]}},
+        {"id": "brief", "type": "concierge_brief", "label": "1. Chief — Design Brief & Route", "agent_id": "agent_chief_architect", "position": {"x": 40, "y": 160}, "enabled": True, "status": "READY", "config": {"allow_ask_user": True, "max_questions": 3}},
+        {"id": "floorplan", "type": "floorplan_cv", "label": "2. Floorplan — Tường, Cửa & Neo Nội Thất", "agent_id": "agent_floorplan", "position": {"x": 320, "y": 160}, "enabled": True, "status": "READY", "config": {"contract": "atelier.floorplan.v1", "coordinate_system": "interior_top_left_xy_down_mm", "allow_inferred_scale": True, "require_source_sha256": True, "require_wall_anchors": True}},
+        {"id": "floorplan_qa", "type": "floorplan_validation", "label": "3. QA — Kiểm Định Mặt Bằng", "agent_id": "agent_qa", "position": {"x": 600, "y": 160}, "enabled": True, "status": "READY", "config": {"independent": True, "allow_inferred_scale": True, "block_geometry_on_error": True}},
+        {"id": "geometry", "type": "pascal_geometry", "label": "4. Geometry — SceneGraph 3D", "agent_id": "agent_geometry", "position": {"x": 880, "y": 160}, "enabled": True, "status": "READY", "config": {"mcp_server": "conn_pascal_mcp", "requires_floorplan_contract": True, "allow_inferred_scale": True, "provisional_when_inferred": True}},
+        {"id": "style", "type": "style_surface", "label": "5A. Style — Màu & Vật Liệu", "agent_id": "agent_style", "position": {"x": 1160, "y": 60}, "enabled": True, "status": "READY", "config": {"allow_provisional_products": True, "must_not_mutate_geometry": True}},
+        {"id": "furniture", "type": "furniture_layout", "label": "5B. Furniture — Nội Thất & Clearance", "agent_id": "agent_furniture", "position": {"x": 1160, "y": 260}, "enabled": True, "status": "READY", "config": {"respect_floorplan_anchors": True, "disable_auto_layout_for_anchored_items": True, "min_walkway_mm": 750, "check_door_swing": True}},
+        {"id": "cost_spec", "type": "deterministic_cost", "label": "6A. Cost & Specification", "agent_id": "agent_cost", "position": {"x": 1450, "y": 60}, "enabled": True, "status": "READY", "config": {"include_catalog_fit": True, "allow_unverified_prices": True, "vat_rate": 0.08}},
+        {"id": "render", "type": "render_gen", "label": "6B. Render — Camera, Ánh Sáng & Cycles", "agent_id": "agent_render", "position": {"x": 1450, "y": 260}, "enabled": True, "status": "READY", "config": {"lock_geometry": True, "persist_gallery": True, "required_views": ["isometric", "entrance", "hero"]}},
+        {"id": "final_qa", "type": "render_qa", "label": "7. QA — Scene, Render & Provenance", "agent_id": "agent_qa", "position": {"x": 1740, "y": 160}, "enabled": True, "status": "READY", "config": {"strict_geometry": True, "independent": True, "verify_floorplan_alignment": True}},
+        {"id": "delivery", "type": "concierge_brief", "label": "8. Chief — Tổng Kết & Bàn Giao", "agent_id": "agent_chief_architect", "position": {"x": 2020, "y": 160}, "enabled": True, "status": "READY", "config": {"delivery_only": True, "cannot_override_qa": True}},
     ],
     "edges": [
-        {"id": "e1-2", "source": "n1_intake", "target": "n2_floorplan"},
-        {"id": "e2-3", "source": "n2_floorplan", "target": "n3_scale_gate"},
-        {"id": "e3-4", "source": "n3_scale_gate", "target": "n4_brief"},
-        {"id": "e4-5", "source": "n4_brief", "target": "n5_geometry"},
-        {"id": "e5-6", "source": "n5_geometry", "target": "n6_style"},
-        {"id": "e5-7", "source": "n5_geometry", "target": "n7_furniture"},
-        {"id": "e7-8", "source": "n7_furniture", "target": "n8_clearance"},
-        {"id": "e8-9", "source": "n8_clearance", "target": "n9_shopping"},
-        {"id": "e6-10", "source": "n6_style", "target": "n10_cost"},
-        {"id": "e9-10", "source": "n9_shopping", "target": "n10_cost"},
-        {"id": "e10-11", "source": "n10_cost", "target": "n11_approval"},
-        {"id": "e11-12", "source": "n11_approval", "target": "n12_render"},
-        {"id": "e12-13", "source": "n12_render", "target": "n13_render_qa"},
-        {"id": "e11-14", "source": "n11_approval", "target": "n14_export"},
+        {"id": "e-brief-floorplan", "source": "brief", "target": "floorplan"},
+        {"id": "e-floorplan-qa", "source": "floorplan", "target": "floorplan_qa"},
+        {"id": "e-floorplan-geometry", "source": "floorplan", "target": "geometry"},
+        {"id": "e-floorplanqa-geometry", "source": "floorplan_qa", "target": "geometry"},
+        {"id": "e-geometry-style", "source": "geometry", "target": "style"},
+        {"id": "e-geometry-furniture", "source": "geometry", "target": "furniture"},
+        {"id": "e-style-cost", "source": "style", "target": "cost_spec"},
+        {"id": "e-furniture-cost", "source": "furniture", "target": "cost_spec"},
+        {"id": "e-style-render", "source": "style", "target": "render"},
+        {"id": "e-furniture-render", "source": "furniture", "target": "render"},
+        {"id": "e-cost-qa", "source": "cost_spec", "target": "final_qa"},
+        {"id": "e-render-qa", "source": "render", "target": "final_qa"},
+        {"id": "e-qa-delivery", "source": "final_qa", "target": "delivery"},
     ],
 }
 
@@ -1477,11 +1554,20 @@ def init_db() -> None:
             )
         else:
             current_payload = json.loads(exists["payload_json"]) if "payload_json" in exists.keys() else {}
+            changed = False
             if current_payload.get("paperclip_agent_key") != agent_payload["paperclip_agent_key"]:
                 current_payload["paperclip_agent_key"] = agent_payload["paperclip_agent_key"]
+                changed = True
+            profile = EIGHT_AGENT_PROFILES.get(a["agent_id"])
+            if profile and current_payload.get("version") != profile["version"]:
+                for key in ("version", "skills", "system_prompt", "allowed_mcp_tools"):
+                    if key in profile:
+                        current_payload[key] = profile[key]
+                changed = True
+            if changed:
                 cur.execute(
-                    "UPDATE agents SET payload_json = ?, updated_at = ? WHERE agent_id = ?",
-                    (json.dumps(current_payload, ensure_ascii=False), now_iso(), a["agent_id"]),
+                    "UPDATE agents SET name = ?, role = ?, payload_json = ?, updated_at = ? WHERE agent_id = ?",
+                    (a["name"], a["role"], json.dumps(current_payload, ensure_ascii=False), now_iso(), a["agent_id"]),
                 )
 
     # Seed Workflow
@@ -1498,17 +1584,18 @@ def init_db() -> None:
             ),
         )
     else:
-        # One-time safe registry migration: preserve the user-drawn graph and all
-        # edges, but replace the old self-review assignment with the independent QA agent.
         existing_wf = cur.execute("SELECT payload_json, version FROM workflows WHERE workflow_id = ?", (DEFAULT_WORKFLOW["workflow_id"],)).fetchone()
-        workflow_payload = json.loads(existing_wf["payload_json"])
-        qa_node = next((node for node in workflow_payload.get("nodes", []) if node.get("id") == "n13_render_qa"), None)
-        if qa_node and qa_node.get("agent_id") == "agent_render":
-            qa_node["agent_id"] = "agent_qa"
-            workflow_payload["version"] = int(existing_wf["version"]) + 1
+        if int(existing_wf["version"]) < int(DEFAULT_WORKFLOW["version"]):
+            workflow_payload = json.loads(json.dumps(DEFAULT_WORKFLOW, ensure_ascii=False))
             cur.execute(
-                "UPDATE workflows SET version = ?, payload_json = ?, updated_at = ? WHERE workflow_id = ?",
-                (workflow_payload["version"], json.dumps(workflow_payload, ensure_ascii=False), now_iso(), DEFAULT_WORKFLOW["workflow_id"]),
+                "UPDATE workflows SET name = ?, version = ?, payload_json = ?, updated_at = ? WHERE workflow_id = ?",
+                (
+                    workflow_payload["name"],
+                    workflow_payload["version"],
+                    json.dumps(workflow_payload, ensure_ascii=False),
+                    now_iso(),
+                    DEFAULT_WORKFLOW["workflow_id"],
+                ),
             )
 
     cur.execute(
@@ -1634,6 +1721,33 @@ def get_native_project_workspace(native_project_id: str) -> Optional[AtelierProj
             rooms=rooms,
             scenes=scenes,
         )
+    finally:
+        conn.close()
+
+
+def get_native_project_for_scene(scene_id: str, company_id: str) -> Optional[Dict[str, str]]:
+    """Return the only native Paperclip Project explicitly linked to a Studio scene.
+
+    Task dispatch must never guess this association from a project name, URL key,
+    or description.  The caller also supplies its resolved company so an old or
+    cross-company link cannot be used accidentally.
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT l.scene_id, l.native_project_id, n.company_id, n.project_name
+            FROM atelier_scene_links AS l
+            JOIN native_project_links AS n
+              ON n.native_project_id = l.native_project_id
+            WHERE l.scene_id = ?
+              AND l.archived = 0
+              AND n.company_id = ?
+              AND n.initialization_status = 'ready'
+            """,
+            (scene_id, company_id),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 
