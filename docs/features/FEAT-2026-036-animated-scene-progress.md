@@ -9,7 +9,7 @@
 | Ngày tạo | 2026-11-15 |
 | Frozen at | 2026-11-15 (Asia/Saigon) |
 | Revision bắt đầu | Chưa triển khai; baseline khảo sát 46719ac78a0869782721d389ab6f58e4cde1f42a |
-| Revision cuối | Chưa có |
+| Revision cuối | Feature code commit `c0d4690391bc65b4d8c08d7220969f136f442f1b` (chưa push; còn VERIFYING) |
 
 ## 1. Bối cảnh
 StudioViewport dùng Three.js trực tiếp; UI có Motion. Người dùng muốn thấy nhân vật chạy tới vị trí bố trí và món đồ xuất hiện sau khi được tạo thành công. Chưa sửa implementation. Mô phỏng riêng dùng dữ liệu giả để duyệt chuyển động, không phản ánh tiến độ dự án thật.
@@ -120,3 +120,5 @@ Thiết kế đã được duyệt và code đã tích hợp trong scope. Chưa 
 2026-11-15: Người dùng yêu cầu dọn preview độc lập và công cụ kiểm thử cục bộ. Lệnh xóa thư mục tạm bị auto-review chặn vì phạm vi bao gồm cả các feature contract; chưa xóa file nào. Mã tính năng và unit tests trong `paperclip/ui/src/features/atelier/scene-animation/` được giữ. Trạng thái vẫn VERIFYING vì chưa đạt build UI và kiểm tra Studio/backend đầy đủ.
 
 2026-11-15: Thu hẹp thao tác theo review, đã xóa riêng `work/animation-review/` chứa các mô phỏng/harness/ảnh/video và dependency thử nghiệm do Codex tạo. Các unit test nằm cùng mã tính năng vẫn được giữ. Các tài liệu hợp đồng 037/038 và `.pnpm-store/` không bị xóa.
+
+2026-11-15, push handoff: code đã commit tại `c0d4690391bc65b4d8c08d7220969f136f442f1b`. Push HTTPS thất bại do không có credential GitHub/gh; GitHub connector hiện chưa kết nối. `pnpm.cmd check:token-gates` không lấy được pnpm runner từ npm. Chạy trực tiếp `node scripts/check-token-gates.mjs` cho thấy 75 màu, 32 arbitrary-value và 1 raw font-size vi phạm ở các file khác ngoài phần Atelier này; không sửa các mục ngoài phạm vi. Chưa chạy full UI build/typecheck vì các gate tích hợp Studio/backend vẫn chưa sẵn sàng.
