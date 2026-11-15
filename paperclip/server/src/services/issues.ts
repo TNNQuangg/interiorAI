@@ -23,6 +23,7 @@ import { notifyChatResponseAvailability } from "./chat-response-availability.js"
 import { notifyChatInboundWakeNotices } from "./chat-inbound-wake-notice-notifications.js";
 import { notifyChatRunMilestones } from "./chat-run-milestone-notifications.js";
 import { notifyApprovalWork } from "./approval-work-notifications.js";
+import { materializeAtelierTelegramFinalApproval } from "./atelier-telegram/approval-gate.js";
 import { notifyDecisionTargetWork, notifyDecisionTargetIssueRemoval } from "./decision-targets.js";
 import { assertOnboardingFirstTaskCreationAllowed, assertOnboardingFirstTaskDependenciesAllowed } from "./onboarding-first-task-admission.js";
 import { readPersistedConfirmationDecision } from "./confirmation-decision.js";
@@ -11849,6 +11850,11 @@ export function issueService(db: Db) {
           .returning()
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!updated) return null;
+        const atelierTelegramApproval =
+          await materializeAtelierTelegramFinalApproval(tx as unknown as Db, updated);
+        if (atelierTelegramApproval) {
+          await notifyApprovalWork(tx, updated.companyId);
+        }
         if (updated.status === "done") {
           await completeTerminalCaseHandoffsForIssue(tx, { companyId: updated.companyId, issueId: updated.id,
             publications: activityPublications });
@@ -13204,13 +13210,37 @@ export function issueService(db: Db) {
       // The query below locks human comments on caller-owned transactions too,
       // sharing the fence with both question creation and Slack settlement.
       const issueQuery = dbOrTx
-        .select({ companyId: issues.companyId, conversationAgentId: issues.conversationAgentId })
+        .select({
+          id: issues.id,
+          companyId: issues.companyId,
+          projectId: issues.projectId,
+          identifier: issues.identifier,
+          title: issues.title,
+          originKind: issues.originKind,
+          originId: issues.originId,
+          assigneeAgentId: issues.assigneeAgentId,
+          responsibleUserId: issues.responsibleUserId,
+          executionState: issues.executionState,
+          conversationAgentId: issues.conversationAgentId,
+        })
         .from(issues)
         .where(eq(issues.id, issueId));
       // Caller-owned transactions (including chat and review comments) must
       // serialize with question creation before inserting the human comment.
       const issue = await (actor.userId || (actor.runId && dbOrTx !== db) ? issueQuery.for("update") : issueQuery)
-        .then((rows: Array<{ companyId: string; conversationAgentId: string | null }>) => rows[0] ?? null);
+        .then((rows: Array<{
+          id: string;
+          companyId: string;
+          projectId: string | null;
+          identifier: string | null;
+          title: string;
+          originKind: string;
+          originId: string | null;
+          assigneeAgentId: string | null;
+          responsibleUserId: string | null;
+          executionState: unknown;
+          conversationAgentId: string | null;
+        }>) => rows[0] ?? null);
 
       if (!issue) throw notFound("Issue not found");
 
@@ -13703,6 +13733,21 @@ export function issueService(db: Db) {
         .update(issues)
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
+
+      // The execution transition can create the final Approval before the
+      // agent's final evidence comment is appended. Re-materialize after the
+      // durable comment exists so web and Telegram show the actual latest
+      // result instead of a stale recovery/hand-back summary.
+      if (authorType === "agent") {
+        const atelierTelegramApproval =
+          await materializeAtelierTelegramFinalApproval(
+            dbOrTx as Db,
+            issue,
+          );
+        if (atelierTelegramApproval) {
+          await notifyApprovalWork(dbOrTx, issue.companyId);
+        }
+      }
 
       // Only an explicitly authored comment from the run causally woken by an
       // inbound chat message is automatically publishable. Presentation,

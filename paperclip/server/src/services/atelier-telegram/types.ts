@@ -45,6 +45,8 @@ export interface TelegramBridgeConfig {
   userPairings: TelegramUserPairing[];
   pairingCodes: TelegramPairingCode[];
   chatTaskMappings: TelegramChatTaskMapping[];
+  /** Native project choice scoped to both Telegram chat and company. */
+  chatProjectSelections: TelegramChatProjectSelection[];
   lastUpdateId: number;
   stats: {
     incomingMessages: number;
@@ -53,6 +55,12 @@ export interface TelegramBridgeConfig {
     approvalsProcessed: number;
     errors: number;
   };
+}
+
+export interface TelegramChatProjectSelection {
+  telegramChatId: number;
+  companyId: string;
+  nativeProjectId: string;
 }
 
 export interface TelegramBotInfo {

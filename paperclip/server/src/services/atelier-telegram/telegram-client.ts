@@ -98,10 +98,11 @@ export class TelegramBotClient {
       disable_web_page_preview?: boolean;
     }
   ): Promise<TelegramMessage> {
+    const effectiveParseMode = options?.parse_mode ?? "Markdown";
     const payload: Record<string, unknown> = {
       chat_id: chatId,
       text,
-      parse_mode: options?.parse_mode ?? "Markdown",
+      parse_mode: effectiveParseMode,
       disable_web_page_preview: options?.disable_web_page_preview ?? true,
     };
 
@@ -116,7 +117,7 @@ export class TelegramBotClient {
       return await this.callApi<TelegramMessage>("sendMessage", payload);
     } catch (err: any) {
       // Fallback: If Markdown parsing fails (e.g. unescaped characters), retry without parse_mode
-      if (options?.parse_mode === "Markdown" && String(err).includes("can't parse entities")) {
+      if (effectiveParseMode === "Markdown" && String(err).includes("can't parse entities")) {
         delete payload.parse_mode;
         return await this.callApi<TelegramMessage>("sendMessage", payload);
       }
@@ -133,11 +134,12 @@ export class TelegramBotClient {
       parse_mode?: "Markdown" | "HTML";
     }
   ): Promise<TelegramMessage | boolean> {
+    const effectiveParseMode = options?.parse_mode ?? "Markdown";
     const payload: Record<string, unknown> = {
       chat_id: chatId,
       message_id: messageId,
       text,
-      parse_mode: options?.parse_mode ?? "Markdown",
+      parse_mode: effectiveParseMode,
     };
     if (options?.reply_markup) {
       payload.reply_markup = options.reply_markup;
@@ -146,7 +148,7 @@ export class TelegramBotClient {
     try {
       return await this.callApi<TelegramMessage | boolean>("editMessageText", payload);
     } catch (err: any) {
-      if (options?.parse_mode === "Markdown" && String(err).includes("can't parse entities")) {
+      if (effectiveParseMode === "Markdown" && String(err).includes("can't parse entities")) {
         delete payload.parse_mode;
         return await this.callApi<TelegramMessage | boolean>("editMessageText", payload);
       }

@@ -1,6 +1,9 @@
 import { Router, type Request, type Response } from "express";
 import type { Db } from "@paperclipai/db";
 import type { IssueAssignmentWakeupDeps } from "../services/issue-assignment-wakeup.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { logActivity } from "../services/activity-log.js";
+import { TelegramProjectContextError } from "../services/atelier-telegram/project-context.js";
 import {
   getTelegramPoller,
   getTelegramTaskManager,
@@ -70,6 +73,37 @@ export function atelierTelegramRoutes(db: Db, heartbeat?: IssueAssignmentWakeupD
         ok: false,
         error: errorMsg,
       });
+    }
+  });
+
+  // POST /project-selection
+  // Board configuration path: no Telegram impersonation, token change, or poller restart.
+  router.post("/project-selection", async (req: Request, res: Response) => {
+    assertBoard(req);
+    await loadTelegramConfig();
+    const mgr = getTelegramTaskManager();
+    if (!mgr) return res.status(503).json({ error: "Task manager not ready" });
+    const { companyId } = await mgr.getCompanyAndProject();
+    assertCompanyAccess(req, companyId);
+    const { chatId, nativeProjectId } = req.body ?? {};
+    if (!Number.isSafeInteger(chatId) || typeof nativeProjectId !== "string" || !nativeProjectId.trim() || nativeProjectId.length > 200) {
+      return res.status(400).json({ error: "Provide an integer chatId and nativeProjectId" });
+    }
+    if (!getTelegramConfigSync().allowedChatIds.includes(chatId)) {
+      return res.status(403).json({ error: "Chat is not in allowedChatIds. Configure the authorized chat before selecting its project." });
+    }
+    try {
+      const context = await mgr.selectProjectForChat(chatId, nativeProjectId.trim());
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId, actorType: actor.actorType, actorId: actor.actorId,
+        action: "telegram.project_selected", entityType: "project", entityId: context.nativeProjectId,
+        details: { telegramChatId: chatId, sceneId: context.sceneId, sceneRevision: context.revision },
+      });
+      return res.json({ ok: true, chatId, context });
+    } catch (error) {
+      if (error instanceof TelegramProjectContextError) return res.status(422).json({ error: error.message });
+      throw error;
     }
   });
 
@@ -241,7 +275,7 @@ export function atelierTelegramRoutes(db: Db, heartbeat?: IssueAssignmentWakeupD
 
   // POST /simulate-message (For verification & automated testing without real network call)
   router.post("/simulate-message", async (req: Request, res: Response) => {
-    const { fromUserId, username, text, replyToMessageId } = req.body;
+    const { fromUserId, username, text, replyToMessageId, chatId } = req.body;
     if (!text) return res.status(400).json({ error: "Missing text" });
 
     const mgr = getTelegramTaskManager();
@@ -250,20 +284,25 @@ export function atelierTelegramRoutes(db: Db, heartbeat?: IssueAssignmentWakeupD
     try {
       const uid = fromUserId || 999888777;
       const uname = username || "atelier_architect";
+      const telegramChatId = chatId ?? uid;
 
       // 1. Natural language / Command simulation
       const t = text.trim();
-      if (t.startsWith("/agents")) {
+      if (t === "/projects") {
+        return res.json({ ok: true, type: "projects", projects: await mgr.listProjects() });
+      } else if (/^\/project(?:\s|$)/.test(t)) {
+        return res.status(400).json({ error: "Use POST /api/atelier/telegram/project-selection with board authorization to configure a chat." });
+      } else if (t.startsWith("/agents")) {
         const ag = await mgr.listAgents();
         return res.json({ ok: true, type: "agents", agents: ag });
       } else if (t.startsWith("/tasks")) {
-        const tk = await mgr.listActiveTasks(10);
+        const tk = await mgr.listActiveTasks(10, telegramChatId);
         return res.json({ ok: true, type: "tasks", tasks: tk });
       } else if (t.startsWith("/approvals")) {
         const ap = await mgr.listPendingApprovals();
         return res.json({ ok: true, type: "approvals", approvals: ap });
       } else if (t.startsWith("/progress")) {
-        const pg = await mgr.getProjectProgress();
+        const pg = await mgr.getProjectProgress(telegramChatId);
         return res.json({ ok: true, type: "progress", progress: pg });
       } else if (replyToMessageId) {
         // Comment simulation
@@ -289,6 +328,7 @@ export function atelierTelegramRoutes(db: Db, heartbeat?: IssueAssignmentWakeupD
         description: t,
         targetAgentId: targetAgent?.id,
         telegramUserId: uid,
+        telegramChatId,
         telegramUsername: uname,
       });
 
@@ -298,6 +338,7 @@ export function atelierTelegramRoutes(db: Db, heartbeat?: IssueAssignmentWakeupD
         issueId: created.issueId,
         identifier: created.identifier,
         assignedAgentName: created.assignedAgentName,
+        executionStatus: created.executionStatus,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });

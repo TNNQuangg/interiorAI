@@ -21,6 +21,7 @@ from app.db import (
     init_db,
     save_project,
 )
+from app import db as app_db
 
 
 def test_japandi_master_bedroom_model_geometry():
@@ -81,7 +82,9 @@ def test_japandi_master_bedroom_boq_budget_range():
     assert min_budget <= total_cost <= max_budget, f"Cost {total_cost} is outside [{min_budget}, {max_budget}]"
 
 
-def test_japandi_master_bedroom_persistence_sqlite():
+def test_japandi_master_bedroom_persistence_sqlite(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_db, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(app_db, "DB_PATH", tmp_path / "atelier.db")
     init_db()
     proj = build_japandi_master_bedroom_project()
     save_project(proj)

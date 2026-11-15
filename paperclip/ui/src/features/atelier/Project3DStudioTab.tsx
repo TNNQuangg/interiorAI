@@ -80,6 +80,7 @@ export function Project3DStudioTab({
     handleSaveScene,
     handleExport,
     handleAssignAsset,
+    handleImportAssetAndAssign,
     handleRequestSmartFit,
     handleRequestPlacementOptions,
     handleCreatePlacementProposal,
@@ -94,7 +95,7 @@ export function Project3DStudioTab({
   });
 
   const workspace = workspaceQuery.data;
-  const linkedScenes = useMemo(() => workspace?.scenes ?? [], [workspace?.scenes]);
+  const linkedScenes = useMemo(() => (workspace?.scenes ?? []).filter((scene) => !scene.archived), [workspace?.scenes]);
   const primaryScene = linkedScenes[0] ?? null;
 
   // Auto-activate scene linked to this native project
@@ -178,17 +179,9 @@ export function Project3DStudioTab({
         <p className="mt-1 max-w-md text-sm text-muted-foreground">
           Dự án <span className="font-medium text-foreground">{projectName}</span> chưa có không gian 3D Studio. Bạn có thể liên kết bản vẽ hoặc yêu cầu Agent khởi tạo phòng.
         </p>
-        <button
-          type="button"
-          className="btn btn-primary mt-4"
-          onClick={() => {
-            // Fallback activate demo scene or trigger auto-link
-            setActiveProjectId("proj_demo_4x5m");
-            void refreshProjectBundle("proj_demo_4x5m");
-          }}
-        >
-          <Sparkles className="h-4 w-4 mr-1.5" /> Khởi tạo Scene 3D cho dự án
-        </button>
+        <p className="mt-4 text-sm text-muted-foreground">
+          Liên kết scene của dự án trước khi mở bản vẽ. Scene mẫu không được tự động dùng thay thế.
+        </p>
       </div>
     );
   }
@@ -431,6 +424,7 @@ export function Project3DStudioTab({
                   onUpdateFurnitureField={handleUpdateFurnitureField}
                   onCommitCanvasPosition={() => void handleSaveScene()}
                   onAssignAsset={handleAssignAsset}
+                  onImportAsset={handleImportAssetAndAssign}
                   onOpenAICopilot={() => setAssistantOpen(true)}
                   onRequestSmartFit={handleRequestSmartFit}
                   onRequestPlacementOptions={handleRequestPlacementOptions}

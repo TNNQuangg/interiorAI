@@ -18,6 +18,8 @@ import {
 } from "./config.js";
 import { TelegramBotClient } from "./telegram-client.js";
 import { AtelierTelegramTaskManager } from "./task-manager.js";
+import { TelegramProjectContextError } from "./project-context.js";
+import { formatTelegramCreationStatus, formatTelegramTaskStatus } from "./task-status.js";
 import type { IssueAssignmentWakeupDeps } from "../issue-assignment-wakeup.js";
 
 // Keep state for users currently in interactive `/newtask` flow: chatId -> targetAgentId
@@ -208,6 +210,19 @@ export class AtelierTelegramPoller {
   }
 
   private async dispatchUpdate(update: TelegramUpdate): Promise<void> {
+    try {
+      await this.dispatchUpdateWithContext(update);
+    } catch (error) {
+      const message = update.message || update.edited_message;
+      if (!(error instanceof TelegramProjectContextError) || !message) throw error;
+      addTelegramLog("warn", "Telegram project context rejected", { chatId: message.chat.id, error: error.message });
+      await this.client.sendMessage(message.chat.id, error.message, {
+        reply_to_message_id: message.message_id, parse_mode: "Markdown",
+      });
+    }
+  }
+
+  private async dispatchUpdateWithContext(update: TelegramUpdate): Promise<void> {
     const config = getTelegramConfigSync();
 
     if (update.callback_query) {
@@ -271,7 +286,6 @@ export class AtelierTelegramPoller {
     // If user is inside pending `/newtask` selection
     const pendingSelection = pendingTaskAgentSelections.get(chatId);
     if (pendingSelection && Date.now() < pendingSelection.expiresAt && !text.startsWith("/")) {
-      pendingTaskAgentSelections.delete(chatId);
       await this.client.sendChatAction(chatId, "typing");
 
       const created = await this.taskManager.createTaskFromTelegram({
@@ -279,8 +293,10 @@ export class AtelierTelegramPoller {
         description: text,
         targetAgentId: pendingSelection.agentId,
         telegramUserId: fromUser?.id || chatId,
+        telegramChatId: chatId,
         telegramUsername: fromUser?.username,
       });
+      pendingTaskAgentSelections.delete(chatId);
 
       config.stats.tasksCreated++;
       await saveTelegramConfig();
@@ -291,7 +307,7 @@ export class AtelierTelegramPoller {
           `📋 **Mã**: \`${created.identifier}\`\n` +
           `🤖 **Phụ trách**: *${created.assignedAgentName}*\n` +
           `📌 **Tiêu đề**: ${text.slice(0, 100)}\n` +
-          `⚡ **Trạng thái**: \`in_progress\`\n\n` +
+          `⚡ **Trạng thái**: ${formatTelegramCreationStatus(created.executionStatus)}\n\n` +
           `💡 *Bạn có thể trả lời (Reply) trực tiếp tin nhắn này để bổ sung yêu cầu cho Agent.*`,
         {
           reply_to_message_id: message.message_id,
@@ -320,7 +336,7 @@ export class AtelierTelegramPoller {
     }
 
     // Check if this message is a Reply to an existing Task message (Two-Way Sync!)
-    if (message.reply_to_message) {
+    if (message.reply_to_message && !text.startsWith("/")) {
       const mapping = findTaskMappingByMessageOrChat(chatId, message.reply_to_message.message_id);
       if (mapping) {
         await this.client.sendChatAction(chatId, "typing");
@@ -345,11 +361,17 @@ export class AtelierTelegramPoller {
 
     // Command Handlers
     if (text.startsWith("/")) {
-      const [cmdPart, ...argParts] = text.split(" ");
-      const cmd = cmdPart.toLowerCase();
+      const [cmdPart, ...argParts] = text.split(/\s+/);
+      const cmd = cmdPart.toLowerCase().split("@")[0];
       const args = argParts.join(" ").trim();
 
       switch (cmd) {
+        case "/projects":
+          await this.handleProjectsCommand(chatId, message.message_id);
+          break;
+        case "/project":
+          await this.handleProjectCommand(chatId, args, message.message_id);
+          break;
         case "/start":
         case "/help":
           await this.handleHelpCommand(chatId, message.message_id);
@@ -401,18 +423,19 @@ export class AtelierTelegramPoller {
 
   private async handleHelpCommand(chatId: number, replyToMessageId: number): Promise<void> {
     const text =
+      `Projects: /projects — list native projects; /project <native ID> — select for this chat.\n\n` +
       `🏛️ **ATELIER AI 2.0 — TRUNG TÂM ĐIỀU PHỐI ĐA AGENT**\n\n` +
       `Hệ thống thiết kế nội thất 3D & BIM trên nền tảng Paperclip.\n\n` +
       `📋 **Danh mục lệnh:**\n` +
       `• \`/agents\` — Danh sách 12+ Chuyên gia Agent\n` +
       `• \`/newtask\` — Giao việc mới qua menu\n` +
-      `• \`/tasks\` — Danh sách công việc đang thực hiện\n` +
+      `• \`/tasks\` — Công việc của dự án đang chọn\n` +
       `• \`/task <mã>\` — Xem chi tiết công việc (VD: \`/task ATL-1\`)\n` +
       `• \`/approvals\` — Xem và phê duyệt các đề xuất thiết kế/báo giá\n` +
       `• \`/bom\` hoặc \`/inventory\` — Xem bóc tách khối lượng & danh mục vật tư BOM\n` +
       `• \`/status\` — Trạng thái hệ thống Local-Lite (RAM, CPU, Agents)\n` +
-      `• \`/progress\` — Tiến độ dự án hiện tại\n` +
-      `• \`/report\` — Báo cáo tổng hợp dự án mẫu\n` +
+      `• \`/progress\` — Tiến độ của dự án đang chọn\n` +
+      `• \`/report\` — Báo cáo của dự án đang chọn\n` +
       `• \`/cancel <mã>\` — Hủy công việc (VD: \`/cancel ATL-8\`)\n` +
       `• \`/help\` — Xem lại hướng dẫn này\n\n` +
       `💬 **Giao việc tự nhiên:**\n` +
@@ -439,6 +462,30 @@ export class AtelierTelegramPoller {
         ],
       },
     });
+  }
+
+  private async handleProjectsCommand(chatId: number, replyToMessageId: number): Promise<void> {
+    const projects = await this.taskManager.listProjects();
+    const selection = getTelegramConfigSync().chatProjectSelections.find((entry) => entry.telegramChatId === chatId);
+    const lines = projects.map((project) =>
+      `${selection?.companyId === project.companyId && selection.nativeProjectId === project.id ? "Selected: " : ""}${project.name.slice(0, 80)}\n/project ${project.id}`);
+    if (!lines.length) lines.push("No native projects. Create a native project and link its canonical scene first.");
+    for (let offset = 0; offset < lines.length; offset += 20) {
+      await this.client.sendMessage(chatId,
+        `Native projects for this company (scene binding is validated on selection):\n\n${lines.slice(offset, offset + 20).join("\n\n")}`,
+        { reply_to_message_id: replyToMessageId, parse_mode: "Markdown" });
+    }
+  }
+
+  private async handleProjectCommand(chatId: number, nativeProjectId: string, replyToMessageId: number): Promise<void> {
+    if (!nativeProjectId || /\s/.test(nativeProjectId)) {
+      await this.client.sendMessage(chatId, "Use /projects then /project <native ID>. The choice applies only to this chat.", { reply_to_message_id: replyToMessageId });
+      return;
+    }
+    const context = await this.taskManager.selectProjectForChat(chatId, nativeProjectId);
+    await this.client.sendMessage(chatId,
+      `Selected native project: ${context.nativeProjectId}\nCanonical scene: ${context.sceneId}\nObserved revision: ${context.revision}\nNew tasks in this chat use this binding; it is revalidated before creation.`,
+      { reply_to_message_id: replyToMessageId, parse_mode: "Markdown" });
   }
 
   private async handleAgentsCommand(chatId: number, replyToMessageId?: number): Promise<void> {
@@ -489,7 +536,7 @@ export class AtelierTelegramPoller {
   }
 
   private async handleTasksCommand(chatId: number, replyToMessageId?: number): Promise<void> {
-    const tasks = await this.taskManager.listActiveTasks(10);
+    const tasks = await this.taskManager.listActiveTasks(10, chatId);
 
     if (tasks.length === 0) {
       await this.client.sendMessage(chatId, `✨ Hiện tại không có công việc nào đang xử lý. Gõ \`/newtask\` để bắt đầu!`, {
@@ -498,12 +545,12 @@ export class AtelierTelegramPoller {
       return;
     }
 
-    let text = `📋 **CÁC CÔNG VIỆC ĐANG THỰC HIỆN (${tasks.length}):**\n\n`;
+    let text = `📋 **CÁC CÔNG VIỆC CHƯA KẾT THÚC (${tasks.length}):**\n\n`;
     const keyboard: any[] = [];
 
     for (const t of tasks) {
-      const statusEmoji = t.status === "in_progress" ? "⚡" : t.status === "in_review" ? "🔍" : "⏳";
-      text += `${statusEmoji} **\`${t.identifier}\`**: ${t.title}\n   Phụ trách: *${t.assignedAgentName}* | Trạng thái: \`${t.status}\`\n\n`;
+      const statusEmoji = t.displayStatus === "in_progress" ? "⚡" : t.displayStatus === "blocked" ? "🚧" : t.displayStatus === "in_review" ? "🔍" : "⏳";
+      text += `${statusEmoji} **\`${t.identifier}\`**: ${t.title}\n   Phụ trách: *${t.assignedAgentName}* | Trạng thái: ${formatTelegramTaskStatus(t)}\n\n`;
       keyboard.push([{ text: `🔍 Xem ${t.identifier}`, callback_data: `view_task:${t.id}` }]);
     }
 
@@ -536,7 +583,7 @@ export class AtelierTelegramPoller {
       `📌 **CHI TIẾT CÔNG VIỆC: \`${ident}\`**\n\n` +
       `**Tiêu đề:** ${issue.title}\n` +
       `**Agent phụ trách:** *${assignedAgentName}*\n` +
-      `**Trạng thái:** \`${issue.status}\`\n` +
+      `**Trạng thái:** ${formatTelegramTaskStatus(issue)}\n` +
       `**Mức ưu tiên:** \`${issue.priority}\`\n` +
       `**Mô tả:**\n${issue.description || "Không có mô tả chi tiết."}\n\n`;
 
@@ -629,24 +676,25 @@ export class AtelierTelegramPoller {
       `   • Công việc đã tạo: \`${config.stats.tasksCreated}\`\n` +
       `   • Phản hồi đã chuyển: \`${config.stats.commentsCreated}\`\n` +
       `   • Đã duyệt: \`${config.stats.approvalsProcessed}\`\n` +
-      `   • Tổng công việc dự án: \`${progress.totalTasks}\` (Hoàn thành: \`${progress.percentDone}%\`)\n` +
+      `   • Tổng công việc công ty: \`${progress.totalTasks}\` (Hoàn thành: \`${progress.percentDone}%\`)\n` +
       `⏱️ **Uptime Bot:** \`${this.getStatus().uptimeSeconds}\` giây`;
 
     await this.client.sendMessage(chatId, text, { reply_to_message_id: replyToMessageId });
   }
 
   private async handleProgressCommand(chatId: number, replyToMessageId?: number): Promise<void> {
-    const progress = await this.taskManager.getProjectProgress();
+    const progress = await this.taskManager.getProjectProgress(chatId);
     const filledBars = Math.round((progress.percentDone / 100) * 10);
     const emptyBars = 10 - filledBars;
     const bar = "█".repeat(filledBars) + "░".repeat(emptyBars);
 
     const text =
-      `📈 **TIẾN ĐỘ THỰC HIỆN DỰ ÁN (Căn hộ mẫu 4x5m):**\n\n` +
+      `📈 **TIẾN ĐỘ DỰ ÁN: ${progress.projectName ?? progress.nativeProjectId ?? "ĐANG CHỌN"}**\n\n` +
       `[${bar}] **${progress.percentDone}%**\n\n` +
       `• Tổng số công việc: **${progress.totalTasks}**\n` +
       `• Đã hoàn thành (\`done\`): **${progress.doneTasks}**\n` +
       `• Đang thực hiện (\`in_progress\`): **${progress.inProgressTasks}**\n` +
+      `• Đang chờ phản hồi/duyệt (\`in_review\`): **${progress.inReviewTasks}**\n` +
       `• Đang chờ duyệt: **${progress.pendingApprovals}**`;
 
     await this.client.sendMessage(chatId, text, {
@@ -663,19 +711,7 @@ export class AtelierTelegramPoller {
   }
 
   private async handleReportCommand(chatId: number, replyToMessageId?: number): Promise<void> {
-    const text =
-      `📑 **BÁO CÁO TỔNG HỢP DỰ ÁN ATELIER AI 2.0**\n\n` +
-      `🏠 **Không gian:** Phòng khách căn hộ mẫu 4.0m × 5.0m (Diện tích 20.0 m²)\n` +
-      `📐 **Quy cách hình học BIM:** Chiều cao thông thủy 2.8m, 1 cửa đi (900×2200mm), 2 cửa sổ (1200×1400mm)\n` +
-      `🛋️ **Bố trí nội thất:** Sofa nỉ băng 3 chỗ, bàn trà tròn mặt đá, kệ TV treo tường 1.8m, đèn trần tán quang\n` +
-      `💰 **Dự toán chi phí sơ bộ (Thị trường Việt Nam):**\n` +
-      `   • Gói Tiết kiệm (Gỗ MFC Melamine): ~ 45,800,000 VNĐ\n` +
-      `   • Gói Tiêu chuẩn (Gỗ MDF chống ẩm An Cường): ~ 72,500,000 VNĐ\n` +
-      `   • Gói Cao cấp (Gỗ Sồi tự nhiên + Da vi sợi): ~ 118,000,000 VNĐ\n` +
-      `📁 **Tệp xuất sẵn có:** DXF (2D CAD), IFC (BIM), GLB (3D Web), BOQ (Excel)\n\n` +
-      `💡 *Mọi đề xuất điều chỉnh có thể giao trực tiếp cho Agent qua Telegram!*`;
-
-    await this.client.sendMessage(chatId, text, { reply_to_message_id: replyToMessageId });
+    await this.handleProgressCommand(chatId, replyToMessageId);
   }
 
   private async handleInventoryBomCommand(chatId: number, replyToMessageId?: number): Promise<void> {
@@ -799,6 +835,7 @@ export class AtelierTelegramPoller {
       description: text,
       targetAgentId: assignedAgent?.id,
       telegramUserId: fromUser?.id || chatId,
+      telegramChatId: chatId,
       telegramUsername: fromUser?.username,
     });
 
@@ -810,7 +847,7 @@ export class AtelierTelegramPoller {
       `📋 **Mã công việc:** \`${created.identifier}\`\n` +
       `🤖 **Agent phụ trách:** *${created.assignedAgentName}*\n` +
       `📌 **Nội dung:** ${text.slice(0, 120)}\n` +
-      `⚡ **Trạng thái:** \`in_progress\`\n\n` +
+      `⚡ **Trạng thái:** ${formatTelegramCreationStatus(created.executionStatus)}\n\n` +
       `💡 *Mẹo: Bạn có thể Reply (Trả lời) trực tiếp tin nhắn này để tiếp tục trao đổi với Agent!*`;
 
     const sent = await this.client.sendMessage(chatId, responseMsg, {
@@ -1063,9 +1100,8 @@ export class AtelierTelegramPoller {
       const heading = reply.needsInput
         ? `❓ **${mapping.assignedAgentName} cần bạn bổ sung cho ${mapping.issueIdentifier}**`
         : `🤖 **${mapping.assignedAgentName} cập nhật ${mapping.issueIdentifier}**`;
-      const footer = reply.needsInput
-        ? "💬 Hãy Reply trực tiếp tin nhắn giao việc để gửi câu trả lời lại cho Agent."
-        : `Trạng thái hiện tại: \`${task.issue.status}\`.`;
+      const footer = `Trạng thái hiện tại: ${formatTelegramTaskStatus(task.issue)}.` +
+        (reply.needsInput ? "\n💬 Hãy Reply trực tiếp tin nhắn giao việc để gửi câu trả lời lại cho Agent." : "");
 
       try {
         await this.client.sendMessage(
@@ -1128,12 +1164,13 @@ export class AtelierTelegramPoller {
 
     const filledBars = Math.round((progress.percentDone / 100) * 10);
     const bar = "█".repeat(filledBars) + "░".repeat(10 - filledBars);
-    const heading = approvalIncreased ? "⚖️ **CÓ YÊU CẦU MỚI CHỜ PHÊ DUYỆT**" : "📈 **TIẾN ĐỘ DỰ ÁN VỪA CẬP NHẬT**";
+    const heading = approvalIncreased ? "⚖️ **CÓ YÊU CẦU MỚI CHỜ PHÊ DUYỆT**" : "📈 **TIẾN ĐỘ CÔNG VIỆC TOÀN CÔNG TY VỪA CẬP NHẬT**";
     await this.broadcastNotification(
       `${heading}\n\n[${bar}] **${progress.percentDone}%**\n` +
         `• Tổng công việc: **${progress.totalTasks}**\n` +
         `• Hoàn thành: **${progress.doneTasks}**\n` +
         `• Đang thực hiện: **${progress.inProgressTasks}**\n` +
+        `• Đang chờ phản hồi/duyệt: **${progress.inReviewTasks}**\n` +
         `• Chờ phê duyệt: **${progress.pendingApprovals}**\n\n` +
         `Gõ \`/progress\`, \`/tasks\` hoặc \`/approvals\` để xem chi tiết.`
     );

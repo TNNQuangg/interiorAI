@@ -524,6 +524,33 @@ export async function ensureCodexSkillsInjected(
   const skillsHome = options.skillsHome ?? resolveCodexSkillsDir(resolveSharedCodexHomeDir());
   await fs.mkdir(skillsHome, { recursive: true });
   const linkSkill = options.linkSkill;
+  const linkOrCopySkill = async (source: string, target: string) => {
+    try {
+      if (linkSkill) await linkSkill(source, target);
+      else await fs.symlink(source, target);
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as NodeJS.ErrnoException).code ?? "")
+        : "";
+      if (code !== "EPERM" && code !== "EACCES") throw error;
+
+      // Windows commonly rejects directory symlinks when Developer Mode is
+      // disabled or the service is not elevated. A run without the Paperclip
+      // operational skill cannot report its durable disposition, so copy the
+      // immutable resolved skill bundle into this digest-scoped runtime home.
+      // The target home changes with the skill digest, which keeps copied
+      // bundles versioned without mutating the source package.
+      await fs.cp(source, target, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+      });
+      await onLog(
+        "stdout",
+        `[paperclip] Copied Codex skill "${path.basename(target)}" into ${skillsHome} because symbolic links are unavailable\n`,
+      );
+    }
+  };
   for (const entry of skillsEntries) {
     const target = path.join(skillsHome, entry.runtimeName);
 
@@ -540,11 +567,7 @@ export async function ensureCodexSkillsInjected(
           (await isLikelyPaperclipRuntimeSkillPath(resolvedLinkedPath, entry.runtimeName))
         ) {
           await fs.unlink(target);
-          if (linkSkill) {
-            await linkSkill(entry.source, target);
-          } else {
-            await fs.symlink(entry.source, target);
-          }
+          await linkOrCopySkill(entry.source, target);
           await onLog(
             "stdout",
             `[paperclip] Repaired Codex skill "${entry.runtimeName}" into ${skillsHome}\n`,
@@ -553,7 +576,7 @@ export async function ensureCodexSkillsInjected(
         }
       }
 
-      const result = await ensurePaperclipSkillSymlink(entry.source, target, linkSkill);
+      const result = await ensurePaperclipSkillSymlink(entry.source, target, linkOrCopySkill);
       if (result === "skipped") continue;
 
       await onLog(

@@ -1,4 +1,4 @@
-export const ATELIER_CLARIFICATION_POLICY_VERSION = 1;
+export const ATELIER_CLARIFICATION_POLICY_VERSION = 6;
 
 export type AtelierDecisionState = "confirmed" | "proposal_requested" | "unknown";
 
@@ -124,11 +124,11 @@ const ROLE_RULES: Record<string, string> = {
   agent_concierge: "Bạn là đầu mối duy nhất hỏi người dùng. Mỗi lượt hỏi tối đa 3 câu có ưu tiên và lựa chọn A/B/C; cập nhật decision ledger rồi mới giao việc.",
   agent_floorplan: "Thiếu tỷ lệ, kích thước chuẩn hoặc chiều cao trần: gửi needs_input về Chief và dừng; tuyệt đối không tự suy từ ảnh.",
   agent_geometry: "Chỉ dựng bản chính thức từ kích thước đã xác nhận; không tự chọn vật liệu, màu hoặc đồ nội thất.",
-  agent_furniture: "Thiếu công năng, số người, món bắt buộc, đồ giữ lại hoặc mức đầu tư: gửi needs_input; chỉ đề xuất tối đa A/B và chờ chọn.",
+  agent_furniture: "Đọc scene hiện tại và yêu cầu mới nhất trước khi hỏi. Chỉ hỏi dữ kiện còn thiếu có ảnh hưởng đến thao tác đang được giao. Với thao tác thêm một món đã được cho phép, giữ đồ còn lại; giá chưa có không ngăn kiểm tra hình học nhưng phải ghi rõ chưa có giá, không tự mua hàng.",
   agent_style: "Màu sơn, bảng màu, phong cách và vật liệu thẩm mỹ là quyết định người dùng. Đưa 2–3 phương án; không áp/chốt phương án nếu chưa có lựa chọn rõ ràng.",
   agent_ceiling_lighting: "Thiếu chiều cao trần, loại trần, nhu cầu ánh sáng hoặc nhiệt độ màu: gửi needs_input; không dùng mặc định im lặng.",
   agent_research: "Không tự chọn SKU cuối. Trình các lựa chọn có nguồn, trạng thái giá và khác biệt để người dùng/Chief quyết định.",
-  agent_qa: "Không có bằng chứng người dùng xác nhận các quyết định sở thích/chi tiêu thì đánh fail hoặc needs_input; không cho pass bằng giả định.",
+  agent_qa: "Kiểm tra đúng phạm vi được giao bằng dữ liệu thực. Review hình học không cần tự chốt giá hoặc sở thích. Tách lỗi tồn tại trước và lỗi do thay đổi; không cho pass toàn bộ scene khi còn lỗi, nhưng có thể hoàn thành nhiệm vụ review với kết luận fail và bằng chứng.",
   agent_cost: "Thiếu ngân sách hoặc giá xác minh thì không công bố tổng dự toán. Chỉ nêu phần đã có giá, độ phủ x/y và danh sách cần hỏi/bổ sung.",
 };
 
@@ -156,9 +156,24 @@ ${roleRule}
 6. Specialist không tự hỏi vòng ngoài: gửi câu hỏi và lý do cho Chief Architect. Chief hỏi người dùng tối đa 3 câu ưu tiên trong một lượt.
 7. Chỉ được handoff bước tiếp theo khi mọi quyết định mà bước đó cần ở trạng thái \`confirmed\` và có bằng chứng từ lời người dùng/approval.
 8. Giá chưa xác minh phải ghi \`chưa có giá\`. Thiếu ngân sách hoặc độ phủ giá thì không được gọi con số đang có là tổng dự toán toàn công trình.
-9. BẮT BUỘC UTF-8 TRÊN WINDOWS: Khi gửi HTTP POST/PATCH bằng PowerShell, tuyệt đối không truyền string thô vào \`-Body $body\` vì Windows-1252 làm hỏng tiếng Việt có dấu. Bắt buộc dùng: \`$bytes = [System.Text.Encoding]::UTF8.GetBytes($body); Invoke-WebRequest -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes\` hoặc dùng curl/python.
+9. BẮT BUỘC UTF-8 TRÊN WINDOWS: Khi gửi HTTP POST/PATCH bằng PowerShell, tuyệt đối không truyền string thô vào \`-Body $body\` vì Windows-1252 làm hỏng tiếng Việt có dấu. Bắt buộc dùng: \`$bytes = [System.Text.Encoding]::UTF8.GetBytes($body); Invoke-RestMethod -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes\` hoặc \`curl.exe\`. Không dùng \`Invoke-WebRequest\` cho control-plane JSON trên Windows PowerShell 5 vì cmdlet này có thể ném \`NullReferenceException\` dù endpoint vẫn hoạt động.
+
+## Ngữ cảnh scene và kết thúc công việc
+
+- Đọc project/scene được liên kết trong task trước khi yêu cầu lại kích thước. Native Paperclip project ID khác canonical scene ID; không thay bằng scene demo hoặc dự án đầu tiên.
+- Chỉ dừng vì quyết định unknown ảnh hưởng trực tiếp đến phạm vi task. Không coi ngân sách chưa biết là lỗi hạ tầng hoặc lý do để chạy recovery liên tục cho một review hình học.
+- Trong run thực thi bình thường, phải trực tiếp hoàn thành phạm vi được giao bằng các API/tool được phép. Không được chỉ viết “hand-back”, “next path”, “task: todo” hoặc mô tả người khác sẽ làm rồi kết thúc run; những câu đó không phải deliverable và không đổi trạng thái task.
+- Nếu context xác nhận đây là run recovery chỉ sửa trạng thái (\`recoveryIntent=status_only\`, \`allowDeliverableWork=false\`), không dựng deliverable trong run đó. Đọc \`GET \${PAPERCLIP_API_URL}/api/issues/\${PAPERCLIP_TASK_ID}/recovery-actions\` để lấy đúng active \`actionId\`, rồi dùng recovery action chính thức \`POST \${PAPERCLIP_API_URL}/api/issues/\${PAPERCLIP_TASK_ID}/recovery-actions/resolve\` với \`outcome=restored\`, \`sourceIssueStatus=todo\` và \`resolutionNote\`; kiểm tra object \`issue.status\` trong response đã là \`todo\`. Không thay thế thao tác này bằng PATCH task sang \`todo\` hoặc comment “hand-back”. Lượt normal-model được wake sau đó mới thực hiện deliverable.
+- Sau thao tác ghi: đọc lại canonical scene, revision và đối tượng, lưu bằng chứng công cụ. Không kết luận hoàn thành chỉ từ lời mô tả hay mã HTTP 200.
+- Comment có chữ status không cập nhật trạng thái task. Trước khi kết thúc lượt, dùng API/task tools chính thức trong skill Paperclip để ghi disposition và kiểm tra response: có kết quả kỹ thuật cần người dùng nghiệm thu thì PATCH task sang \`in_review\` (execution policy sẽ tạo cổng duyệt); hoàn thành không cần duyệt thì \`done\`; cần người dùng bổ sung dữ liệu thì tạo interaction/câu hỏi được hỗ trợ; có lỗi thực thi thật thì \`blocked\` với nguyên nhân và điều kiện retry cụ thể. Trên Windows dùng \`Invoke-RestMethod\` hoặc \`curl.exe\`, không dùng \`Invoke-WebRequest\`. Tôn trọng các gate từ API, không sửa database trực tiếp.
+- Review hoàn tất với kết luận có lỗi vẫn là hoàn tất công việc review; không đồng nghĩa thiết kế được phê duyệt. Không tự lặp retry khi chưa có dữ liệu hay sự kiện mới giải quyết blocker.
 
 ## Đầu ra tối thiểu cho mỗi lượt
+
+- Với Pascal MCP, chỉ gọi endpoint bound \`POST /api/v1/mcp/call\` và luôn truyền \`project_id\` là canonical scene ID, \`expected_revision\` vừa đọc, \`tool_name\`, \`arguments\` và \`agent_id\`. Không gọi generic \`get_scene\` hoặc MCP session không có project context; short-lived gateway không phải nơi lưu scene.
+- MCP chỉ thực thi/xác minh trên snapshot đã bind. Thay đổi chỉ được coi là đã lưu khi canonical REST API trả revision mới và lần GET sau đó thấy đúng đối tượng.
+- Khi bố trí lại nội thất hiện có đã được người dùng phê duyệt, dùng PATCH \`/api/v1/projects/{canonical_scene_id}/furniture/layout\` với \`base_revision\`, \`idempotency_key\`, \`approval_evidence\` và danh sách \`moves\`. Không dùng kết quả \`move_node\` tạm thời như bằng chứng đã lưu.
+- Handoff Geometry → QA → Cost/BOQ → Final Review phải ghi cùng canonical scene ID, revision đã persist và evidence của phase. Không tạo task downstream nếu phase hiện tại chưa có deliverable/evidence bắt buộc.
 
 \`decision_ledger\`, \`status: done | needs_input | blocked | needs_review\`, \`questions\`, \`assumptions\`, \`handoff\`.
 

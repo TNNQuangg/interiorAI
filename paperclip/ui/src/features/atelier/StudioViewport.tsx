@@ -26,6 +26,7 @@ import {
   disposeOwnedMaterials,
   type MaterialDefinitionValue,
 } from './materialResolver'
+import { createProceduralFurniture } from './proceduralFurniture'
 import { Eye, Sparkles, Layers } from 'lucide-react'
 
 interface StudioViewportProps {
@@ -587,20 +588,10 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           group.add(aoPlane)
         }
 
-        const mainMat = new THREE.MeshStandardMaterial({
-          color: f.color_hex || '#E4DDD3',
-          roughness: 0.62,
-          emissive: isSelected
-            ? new THREE.Color('#0F766E')
-            : isHovered
-            ? new THREE.Color('#14B8A6')
-            : new THREE.Color('#000000'),
-          emissiveIntensity: isSelected ? 0.22 : isHovered ? 0.1 : 0,
-        })
-
-        if (f.normalized_glb) {
+        const assetUrl = f.normalized_glb || (f.asset_id ? `/api/v1/assets/${f.asset_id}/file` : null)
+        if (assetUrl) {
           gltfLoader.load(
-            f.normalized_glb,
+            assetUrl,
             (gltf) => {
               if (disposed) return
               const model = gltf.scene
@@ -608,7 +599,14 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               const sourceSize = sourceBounds.getSize(new THREE.Vector3())
               if (sourceSize.x <= 0 || sourceSize.y <= 0 || sourceSize.z <= 0) return
 
-              model.scale.set(fw / sourceSize.x, fh / sourceSize.y, fd / sourceSize.z)
+              // Product GLBs must keep their real-world proportions. Parametric assets
+              // may stretch only on explicitly declared axes.
+              const fitScale = Math.min(fw / sourceSize.x, fh / sourceSize.y, fd / sourceSize.z)
+              const allowedAxes = new Set(f.parametric_axes || [])
+              const sx = f.sizing_policy === 'PARAMETRIC' && allowedAxes.has('width') ? fw / sourceSize.x : fitScale
+              const sy = f.sizing_policy === 'PARAMETRIC' && allowedAxes.has('height') ? fh / sourceSize.y : fitScale
+              const sz = f.sizing_policy === 'PARAMETRIC' && allowedAxes.has('depth') ? fd / sourceSize.z : fitScale
+              model.scale.set(sx, sy, sz)
               model.updateMatrixWorld(true)
               const normalizedBounds = new THREE.Box3().setFromObject(model)
               const normalizedCenter = normalizedBounds.getCenter(new THREE.Vector3())
@@ -647,52 +645,20 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
               console.error(`Không thể tải GLB ${f.asset_id || f.id}`, error)
             }
           )
-        } else if (f.category === 'sofa') {
-          const base = new THREE.Mesh(new THREE.BoxGeometry(fw, fh * 0.46, fd), mainMat)
-          base.position.y = fh * 0.23
-          base.castShadow = true
-          base.receiveShadow = true
-          base.userData = { entityId: f.id }
-          group.add(base)
-          pickableMeshes.push(base)
-
-          const back = new THREE.Mesh(new THREE.BoxGeometry(fw, fh * 0.54, fd * 0.22), mainMat)
-          back.position.set(0, fh * 0.68, -fd * 0.39)
-          back.castShadow = true
-          back.userData = { entityId: f.id }
-          group.add(back)
-          pickableMeshes.push(back)
-
-          const armL = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.08, fh * 0.62, fd), mainMat)
-          armL.position.set(-fw * 0.46, fh * 0.31, 0)
-          armL.castShadow = true
-          group.add(armL)
-
-          const armR = armL.clone()
-          armR.position.set(fw * 0.46, fh * 0.31, 0)
-          group.add(armR)
-        } else if (f.category === 'coffee_table') {
-          const top = new THREE.Mesh(new THREE.BoxGeometry(fw, 0.05, fd), mainMat)
-          top.position.y = fh - 0.025
-          top.castShadow = true
-          top.userData = { entityId: f.id }
-          group.add(top)
-          pickableMeshes.push(top)
-
-          const legBase = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.72, fh - 0.05, fd * 0.72), mainMat)
-          legBase.position.y = (fh - 0.05) / 2
-          legBase.castShadow = true
-          legBase.userData = { entityId: f.id }
-          group.add(legBase)
-          pickableMeshes.push(legBase)
         } else {
-          const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fd), mainMat)
-          box.position.y = fh / 2
-          box.castShadow = true
-          box.receiveShadow = true
-          box.userData = { entityId: f.id }
-          group.add(box)
-          pickableMeshes.push(box)
+          const preview = createProceduralFurniture({
+            width: fw,
+            depth: fd,
+            height: fh,
+            category: f.category,
+            name: f.name,
+            color: f.color_hex,
+            entityId: f.id,
+            lowSpecMode,
+            pickableMeshes,
+          })
+          group.add(preview)
+          objectRoots.set(f.id, preview)
         }
 
         if (isSelected || isHovered) {
@@ -705,7 +671,7 @@ export const StudioViewport: React.FC<StudioViewportProps> = React.memo(
           group.add(outline)
         }
 
-        group.position.set((f.x_mm || 2000) / 1000, 0, (f.y_mm || 2500) / 1000)
+        group.position.set((f.x_mm ?? 2000) / 1000, (f.z_mm ?? 0) / 1000, (f.y_mm ?? 2500) / 1000)
         group.rotation.y = -((f.rotation_deg || 0) * Math.PI) / 180
         scene.add(group)
       })

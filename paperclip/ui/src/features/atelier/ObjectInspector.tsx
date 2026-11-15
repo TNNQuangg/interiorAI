@@ -4,7 +4,7 @@
  * 3D Asset Switcher and 2D/3D Pascal Viewport. Color and material choices are
  * delegated to the AI Copilot proposal flow instead of manual preset pickers.
  */
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -26,6 +26,7 @@ interface ObjectInspectorProps {
   onUpdateFurnitureField: (furnId: string, field: string, value: any) => void
   onCommitCanvasPosition: () => void
   onAssignAsset?: (objectId: string, assetId: string) => Promise<any>
+  onImportAsset?: (objectId: string, file: File) => Promise<any>
   onOpenAICopilot?: () => void
   onRequestSmartFit?: (objectId: string) => Promise<any>
   onRequestPlacementOptions?: (objectId: string) => Promise<any>
@@ -45,6 +46,7 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   onUpdateFurnitureField,
   onCommitCanvasPosition,
   onAssignAsset,
+  onImportAsset,
   onOpenAICopilot,
   onRequestSmartFit,
   onRequestPlacementOptions,
@@ -58,7 +60,9 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
     smartFit: true,
   })
   const [assigningAsset, setAssigningAsset] = useState(false)
+  const [importingAsset, setImportingAsset] = useState(false)
   const [targetAssetId, setTargetAssetId] = useState<string>('')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [fitReport, setFitReport] = useState<any>(null)
   const [placementOptions, setPlacementOptions] = useState<any[]>([])
   const [fitLoading, setFitLoading] = useState(false)
@@ -72,23 +76,59 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
   const selectedFurn = furniture.find((f: any) => f.id === selectedEntityId)
   const selectedWall = walls.find((w: any) => w.id === selectedEntityId)
 
+  const compatibleAssets = useMemo(() => {
+    if (!selectedFurn) return []
+    const target = String(selectedFurn.category || '').toLowerCase().replace(/[\s-]+/g, '_')
+    const aliases: Record<string, string[]> = {
+      bed: ['bed'],
+      nightstand: ['nightstand', 'bedside_table', 'side_table'],
+      desk: ['desk', 'table', 'vanity'],
+      vanity: ['desk', 'table', 'vanity'],
+      wardrobe: ['wardrobe', 'closet', 'cabinet'],
+      tv_cabinet: ['tv_cabinet', 'tv_console', 'media_console', 'console_table'],
+      coffee_table: ['coffee_table', 'table'],
+      sofa: ['sofa'],
+      armchair: ['armchair', 'chair'],
+      rug: ['rug', 'carpet'],
+    }
+    const accepted = aliases[target] || [target]
+    return assetLibrary.filter((asset: any) => {
+      const category = String(asset.category || '').toLowerCase().replace(/[\s-]+/g, '_')
+      return accepted.some((alias) => category === alias || category.includes(alias))
+    })
+  }, [assetLibrary, selectedFurn?.id, selectedFurn?.category])
+
   useEffect(() => {
     if (selectedFurn?.asset_id) {
       setTargetAssetId(selectedFurn.asset_id)
-    } else if (assetLibrary.length > 0 && !targetAssetId) {
-      setTargetAssetId(assetLibrary[0].asset_id)
+    } else if (compatibleAssets.length > 0) {
+      setTargetAssetId(compatibleAssets[0].asset_id)
+    } else {
+      setTargetAssetId('')
     }
-  }, [selectedFurn?.id, selectedFurn?.asset_id, assetLibrary])
+  }, [selectedFurn?.id, selectedFurn?.asset_id, compatibleAssets])
 
 
   const handleAssignAssetClick = async () => {
-    const assetToAssign = targetAssetId || assetLibrary[0]?.asset_id
+    const assetToAssign = targetAssetId || compatibleAssets[0]?.asset_id
     if (!selectedFurn || !assetToAssign || !onAssignAsset) return
     setAssigningAsset(true)
     try {
       await onAssignAsset(selectedFurn.id, assetToAssign)
     } finally {
       setAssigningAsset(false)
+    }
+  }
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !selectedFurn || !onImportAsset) return
+    setImportingAsset(true)
+    try {
+      await onImportAsset(selectedFurn.id, file)
+    } finally {
+      setImportingAsset(false)
     }
   }
 
@@ -160,6 +200,20 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                             3D Asset: {selectedFurn.asset_id}
                           </div>
                         )}
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            marginTop: 6,
+                            padding: '2px 7px',
+                            borderRadius: 999,
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            color: selectedFurn.normalized_glb ? '#047857' : '#92400E',
+                            background: selectedFurn.normalized_glb ? '#D1FAE5' : '#FEF3C7',
+                          }}
+                        >
+                          {selectedFurn.normalized_glb ? 'GLB thật có nguồn' : 'Mô hình tham số dự phòng'}
+                        </div>
                       </div>
                       <div
                         style={{
@@ -192,7 +246,7 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                   </div>
 
                   {/* 3D GLB Asset Switcher (G4/G8: Switch between single-slot Sofa_01 and multi-slot GlamVelvetSofa / ArmChair / CoffeeTable) */}
-                  {assetLibrary.length > 0 && (
+                  {(
                     <div className="surface-subtle" style={{ padding: '8px 10px' }}>
                       <div className="text-caption" style={{ fontWeight: 600, marginBottom: 4 }}>
                         Mô hình 3D GLB thực tế (Thư viện CC0 / CC-BY)
@@ -205,7 +259,10 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                           value={targetAssetId}
                           onChange={(e) => setTargetAssetId(e.target.value)}
                         >
-                          {assetLibrary.map((asset: any) => (
+                          <option value="" disabled>
+                            {compatibleAssets.length > 0 ? 'Chọn model cùng loại...' : 'Chưa có model cùng loại'}
+                          </option>
+                          {compatibleAssets.map((asset: any) => (
                             <option key={asset.asset_id} value={asset.asset_id}>
                               {asset.source_id || asset.asset_id} ({asset.material_slots?.length || 1} slots · {Math.round(asset.dimensions_mm?.[0] || 0)}×{Math.round(asset.dimensions_mm?.[1] || 0)}mm)
                             </option>
@@ -220,6 +277,28 @@ export const ObjectInspector: React.FC<ObjectInspectorProps> = ({
                           <RefreshCw size={11} /> {assigningAsset ? '...' : 'Gán GLB'}
                         </button>
                       </div>
+                      {onImportAsset && (
+                        <div style={{ marginTop: 7 }}>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".glb,model/gltf-binary"
+                            hidden
+                            onChange={handleImportFile}
+                          />
+                          <button
+                            className="btn btn-sm btn-soft"
+                            style={{ width: '100%', justifyContent: 'center' }}
+                            disabled={importingAsset}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            <Box size={11} /> {importingAsset ? 'Đang chuẩn hóa GLB...' : 'Tải GLB thật từ máy và gắn vào món này'}
+                          </button>
+                          <div className="text-caption" style={{ marginTop: 5, lineHeight: 1.35 }}>
+                            Chỉ tải model bạn có quyền sử dụng. Hệ thống sẽ kiểm tra GLB, kích thước và vật liệu trước khi gắn.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

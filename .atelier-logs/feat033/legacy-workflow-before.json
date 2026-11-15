@@ -1,0 +1,279 @@
+﻿{
+    "ok":  true,
+    "version":  1,
+    "company_id":  "0873a79a-62ba-4bc3-9f2d-9277b4b6c6ed",
+    "project_id":  "142c2363-1cec-42d6-92b5-27f77b3a2570",
+    "root_issue_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+    "nodes":  [
+                  {
+                      "stage_key":  "intake",
+                      "label":  "Chief Architect — chốt brief và phạm vi",
+                      "agent_key":  "agent_concierge",
+                      "agent_id":  "90916c53-fbc8-4b5f-816a-998726203354",
+                      "depends_on":  [
+
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_floorplan"
+                                          ],
+                      "issue_id":  "1efcd751-90a1-4346-91f3-c948cfa99000",
+                      "identifier":  "ATL-8",
+                      "status":  "blocked",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+
+                                               ]
+                  },
+                  {
+                      "stage_key":  "floorplan",
+                      "label":  "Floor Plan — xác thực mặt bằng và tỷ lệ",
+                      "agent_key":  "agent_floorplan",
+                      "agent_id":  "7b624879-4187-43b0-913a-eaf7365e8824",
+                      "depends_on":  [
+                                         "intake"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_geometry"
+                                          ],
+                      "issue_id":  "ec18f7d2-cc50-47ce-98d0-7a8575183ba4",
+                      "identifier":  "ATL-2",
+                      "status":  "done",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "1efcd751-90a1-4346-91f3-c948cfa99000"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "geometry",
+                      "label":  "Geometry \u0026 BIM — dựng SceneGraph",
+                      "agent_key":  "agent_geometry",
+                      "agent_id":  "6f84574b-081d-4d3c-a9c9-70663512620d",
+                      "depends_on":  [
+                                         "floorplan"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_furniture",
+                                              "agent_style",
+                                              "agent_qa"
+                                          ],
+                      "issue_id":  "11c8f12f-8891-44b1-8eec-c6763e3bb2bf",
+                      "identifier":  "ATL-3",
+                      "status":  "done",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "ec18f7d2-cc50-47ce-98d0-7a8575183ba4"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "furniture",
+                      "label":  "Furniture — bố trí nội thất",
+                      "agent_key":  "agent_furniture",
+                      "agent_id":  "4a80f511-1d84-4838-b141-45b288320c90",
+                      "depends_on":  [
+                                         "geometry"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_ceiling_lighting",
+                                              "agent_research",
+                                              "agent_qa"
+                                          ],
+                      "issue_id":  "298ca36d-4983-44e6-87ae-36faab0adb14",
+                      "identifier":  "ATL-9",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "11c8f12f-8891-44b1-8eec-c6763e3bb2bf"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "style",
+                      "label":  "Style \u0026 Materials — vật liệu và bảng màu",
+                      "agent_key":  "agent_style",
+                      "agent_id":  "56346770-b539-43c5-9521-ed99071f8763",
+                      "depends_on":  [
+                                         "geometry"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_ceiling_lighting",
+                                              "agent_research",
+                                              "agent_qa"
+                                          ],
+                      "issue_id":  "7dd537b1-580a-47b5-a168-6ae1da5b492b",
+                      "identifier":  "ATL-4",
+                      "status":  "in_review",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "11c8f12f-8891-44b1-8eec-c6763e3bb2bf"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "lighting",
+                      "label":  "Lighting \u0026 Visualization — trần, đèn và camera",
+                      "agent_key":  "agent_ceiling_lighting",
+                      "agent_id":  "12016ecb-34f2-4467-a636-6f6ba95c05d3",
+                      "depends_on":  [
+                                         "furniture",
+                                         "style"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_qa"
+                                          ],
+                      "issue_id":  "c3502cc0-e8a6-4c8d-b6b1-9a9b4c20cb9f",
+                      "identifier":  "ATL-10",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "298ca36d-4983-44e6-87ae-36faab0adb14",
+                                                   "7dd537b1-580a-47b5-a168-6ae1da5b492b"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "research",
+                      "label":  "Product Research — xác minh sản phẩm",
+                      "agent_key":  "agent_research",
+                      "agent_id":  "0b06edaf-a8f7-4369-84f7-8dd89f2d8306",
+                      "depends_on":  [
+                                         "furniture",
+                                         "style"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_cost"
+                                          ],
+                      "issue_id":  "0d3347c3-e3b8-4ac3-9239-26f3b32ea517",
+                      "identifier":  "ATL-11",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "298ca36d-4983-44e6-87ae-36faab0adb14",
+                                                   "7dd537b1-580a-47b5-a168-6ae1da5b492b"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "qa",
+                      "label":  "QA — kiểm định xung đột và quy chuẩn",
+                      "agent_key":  "agent_qa",
+                      "agent_id":  "006a170d-0497-424c-bdd7-a93e9e516ad0",
+                      "depends_on":  [
+                                         "geometry",
+                                         "furniture",
+                                         "style",
+                                         "lighting"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_cost"
+                                          ],
+                      "issue_id":  "f19d1ca7-0141-42a6-9d75-05901d84a148",
+                      "identifier":  "ATL-12",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "11c8f12f-8891-44b1-8eec-c6763e3bb2bf",
+                                                   "298ca36d-4983-44e6-87ae-36faab0adb14",
+                                                   "7dd537b1-580a-47b5-a168-6ae1da5b492b",
+                                                   "c3502cc0-e8a6-4c8d-b6b1-9a9b4c20cb9f"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "cost",
+                      "label":  "Cost \u0026 BOM — bóc tách và dự toán",
+                      "agent_key":  "agent_cost",
+                      "agent_id":  "80989182-83d1-4d38-b0f8-8cd725d855ca",
+                      "depends_on":  [
+                                         "qa",
+                                         "research"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_concierge"
+                                          ],
+                      "issue_id":  "4e9ae30d-cb4f-485c-935e-84837c47e0d4",
+                      "identifier":  "ATL-5",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "f19d1ca7-0141-42a6-9d75-05901d84a148",
+                                                   "0d3347c3-e3b8-4ac3-9239-26f3b32ea517"
+                                               ]
+                  },
+                  {
+                      "stage_key":  "final_review",
+                      "label":  "Chief Architect — tổng hợp và xin phê duyệt",
+                      "agent_key":  "agent_concierge",
+                      "agent_id":  "90916c53-fbc8-4b5f-816a-998726203354",
+                      "depends_on":  [
+                                         "cost"
+                                     ],
+                      "handoff_targets":  [
+                                              "agent_floorplan"
+                                          ],
+                      "issue_id":  "2a24aaa9-3360-41a3-8014-59746b58e4de",
+                      "identifier":  "ATL-13",
+                      "status":  "todo",
+                      "parent_id":  "02f0541d-e5b7-4558-97b5-fa0b703a6676",
+                      "blocked_by_issue_ids":  [
+                                                   "4e9ae30d-cb4f-485c-935e-84837c47e0d4"
+                                               ]
+                  }
+              ],
+    "edges":  [
+                  {
+                      "from_stage":  "intake",
+                      "to_stage":  "floorplan"
+                  },
+                  {
+                      "from_stage":  "floorplan",
+                      "to_stage":  "geometry"
+                  },
+                  {
+                      "from_stage":  "geometry",
+                      "to_stage":  "furniture"
+                  },
+                  {
+                      "from_stage":  "geometry",
+                      "to_stage":  "style"
+                  },
+                  {
+                      "from_stage":  "furniture",
+                      "to_stage":  "lighting"
+                  },
+                  {
+                      "from_stage":  "style",
+                      "to_stage":  "lighting"
+                  },
+                  {
+                      "from_stage":  "furniture",
+                      "to_stage":  "research"
+                  },
+                  {
+                      "from_stage":  "style",
+                      "to_stage":  "research"
+                  },
+                  {
+                      "from_stage":  "geometry",
+                      "to_stage":  "qa"
+                  },
+                  {
+                      "from_stage":  "furniture",
+                      "to_stage":  "qa"
+                  },
+                  {
+                      "from_stage":  "style",
+                      "to_stage":  "qa"
+                  },
+                  {
+                      "from_stage":  "lighting",
+                      "to_stage":  "qa"
+                  },
+                  {
+                      "from_stage":  "qa",
+                      "to_stage":  "cost"
+                  },
+                  {
+                      "from_stage":  "research",
+                      "to_stage":  "cost"
+                  },
+                  {
+                      "from_stage":  "cost",
+                      "to_stage":  "final_review"
+                  }
+              ]
+}

@@ -349,6 +349,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="projects" element={<Projects />} />
       <Route path="projects/:projectId" element={<ProjectDetail />} />
       <Route path="projects/:projectId/overview" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/3d-studio" element={<ProjectDetail />} />
+      <Route path="projects/:projectId/studio" element={<ProjectDetail />} />
       <Route path="projects/:projectId/issues" element={<ProjectDetail />} />
       <Route path="projects/:projectId/issues/:filter" element={<ProjectDetail />} />
       <Route element={<IsolatedWorkspacesRouteGate />}>
@@ -919,6 +921,8 @@ export function App() {
           <Route path="projects" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/overview" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/3d-studio" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/studio" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues/:filter" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/workspaces" element={<UnprefixedBoardRedirect />} />

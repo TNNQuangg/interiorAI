@@ -12,6 +12,7 @@ import {
   Trash2, Undo2, Upload, X,
 } from "lucide-react";
 import { useActiveCompanyPrefix, useNavigate } from "@/lib/router";
+import { useCompany } from "@/context/CompanyContext";
 import { OrthogonalEdge } from "./workflow-graph/OrthogonalEdge";
 import { layoutWorkflowGraph } from "./workflow-graph/layout";
 import { taskLifecycleGraph } from "./workflow-graph/lifecycle";
@@ -85,6 +86,7 @@ function ToolButton({ title, disabled, active, onClick, children }: { title: str
 export function AtelierWorkflowBuilder() {
   const prefix = useActiveCompanyPrefix();
   const navigate = useNavigate();
+  const { selectedCompanyId } = useCompany();
   const [versions, setVersions] = useState<Version[]>([]);
   const [activeId, setActiveId] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -121,12 +123,17 @@ export function AtelierWorkflowBuilder() {
   }, []);
 
   const load = useCallback(async (preferredId?: string) => {
+    if (!selectedCompanyId) {
+      setError("Chưa chọn tổ chức để tải workflow");
+      return;
+    }
     setBusy("load"); setError("");
     try {
+      const companyQuery = `?company_id=${encodeURIComponent(selectedCompanyId)}`;
       const [versionPayload, agentPayload, companyPayload] = await Promise.all([
-        request<{ versions: Version[] }>("/api/atelier/workflow/definitions"),
-        request<{ agents: Agent[] }>("/api/atelier/agent-capabilities"),
-        request<{ projects: Project[] }>("/api/atelier/company-workflow"),
+        request<{ versions: Version[] }>(`/api/atelier/workflow/definitions${companyQuery}`),
+        request<{ agents: Agent[] }>(`/api/atelier/agent-capabilities${companyQuery}`),
+        request<{ projects: Project[] }>(`/api/atelier/company-workflow${companyQuery}`),
       ]);
       setVersions(versionPayload.versions); setAgents(agentPayload.agents); setProjects(companyPayload.projects);
       const next = versionPayload.versions.find((item) => item.id === preferredId) ?? versionPayload.versions[0];
@@ -140,7 +147,7 @@ export function AtelierWorkflowBuilder() {
       setDirty(false); setPast([]); setFuture([]); setIssues([]);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không tải được workflow"); }
     finally { setBusy(""); }
-  }, [calculateLayout]);
+  }, [calculateLayout, selectedCompanyId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -245,7 +252,7 @@ export function AtelierWorkflowBuilder() {
     if (!active || !editable) return;
     setBusy("save"); setError("");
     try {
-      const payload = await request<{ workflow: Version; validation: { issues: ValidationIssue[] } }>(`/api/atelier/workflow/definitions/${active.id}`, { method: "PATCH", body: JSON.stringify({ definition: definition(), expected_updated_at: active.updatedAt }) });
+      const payload = await request<{ workflow: Version; validation: { issues: ValidationIssue[] } }>(`/api/atelier/workflow/definitions/${active.id}`, { method: "PATCH", body: JSON.stringify({ company_id: selectedCompanyId, definition: definition(), expected_updated_at: active.updatedAt }) });
       setVersions((items) => items.map((item) => item.id === active.id ? payload.workflow : item)); setIssues(payload.validation.issues); setDirty(false); setMessage(`Đã lưu draft v${active.version}.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Lưu thất bại"); }
     finally { setBusy(""); }
@@ -254,7 +261,7 @@ export function AtelierWorkflowBuilder() {
     if (!active) return;
     setBusy(test ? "test" : "validate"); setError("");
     try {
-      const payload = await request<any>(`/api/atelier/workflow/definitions/${active.id}/${test ? "test" : "validate"}`, { method: "POST", body: JSON.stringify({ definition: definition() }) });
+      const payload = await request<any>(`/api/atelier/workflow/definitions/${active.id}/${test ? "test" : "validate"}`, { method: "POST", body: JSON.stringify({ company_id: selectedCompanyId, definition: definition() }) });
       const result = test ? payload.validation : payload; setIssues(result.issues);
       setMessage(result.valid ? (test ? "Dry run hợp lệ. Không agent nào được dispatch." : "Workflow hợp lệ, không có lỗi.") : `Phát hiện ${result.issues.length} vấn đề.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Validation thất bại"); }
@@ -263,14 +270,14 @@ export function AtelierWorkflowBuilder() {
   const newDraft = async (restore = false) => {
     if (!active) return;
     setBusy("draft"); setError("");
-    try { const payload = await request<{ workflow: Version }>(`/api/atelier/workflow/definitions/${active.id}/${restore ? "restore" : "draft"}`, { method: "POST", body: "{}" }); await load(payload.workflow.id); setMessage(`${restore ? "Đã khôi phục" : "Đã tạo"} draft v${payload.workflow.version}.`); }
+    try { const payload = await request<{ workflow: Version }>(`/api/atelier/workflow/definitions/${active.id}/${restore ? "restore" : "draft"}`, { method: "POST", body: JSON.stringify({ company_id: selectedCompanyId }) }); await load(payload.workflow.id); setMessage(`${restore ? "Đã khôi phục" : "Đã tạo"} draft v${payload.workflow.version}.`); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Không tạo được draft"); }
     finally { setBusy(""); }
   };
   const publish = async () => {
     if (!active || !editable) return;
     setBusy("publish"); setError("");
-    try { if (dirty) await save(); const payload = await request<{ workflow: Version }>(`/api/atelier/workflow/definitions/${active.id}/publish`, { method: "POST", body: "{}" }); await load(payload.workflow.id); setMessage(`Đã publish v${payload.workflow.version}. Run cũ vẫn giữ version cũ.`); }
+    try { if (dirty) await save(); const payload = await request<{ workflow: Version }>(`/api/atelier/workflow/definitions/${active.id}/publish`, { method: "POST", body: JSON.stringify({ company_id: selectedCompanyId }) }); await load(payload.workflow.id); setMessage(`Đã publish v${payload.workflow.version}. Run cũ vẫn giữ version cũ.`); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Publish thất bại"); }
     finally { setBusy(""); }
   };

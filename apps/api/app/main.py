@@ -128,6 +128,7 @@ from app.services.material_system import (
     save_material,
 )
 from app.services.smart_fit import assess_fit, generate_placement_options, plan_resize
+from app.services.scene_furniture import router as scene_furniture_router
 from app.services.agent_orchestrator_engine import execute_real_workflow_run, sync_native_workflow_run
 from app.services.workflow_input_sync import list_run_decisions, reconcile_workflow_inputs
 from app.services.workflow_runtime import validate_workflow_snapshot
@@ -204,6 +205,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(scene_furniture_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1264,6 +1267,8 @@ class McpCallPayload(BaseModel):
     tool_name: str
     arguments: Dict[str, Any] = {}
     agent_id: Optional[str] = None
+    project_id: Optional[str] = None
+    expected_revision: Optional[int] = None
 
 
 @app.post("/api/v1/mcp/call")
@@ -1276,8 +1281,62 @@ async def api_mcp_call_tool(body: McpCallPayload):
         if row:
             ag = json.loads(row["payload_json"])
             allowed = ag.get("allowed_mcp_tools")
-    res = await call_pascal_mcp_tool(body.tool_name, body.arguments, allowed_tools=allowed)
-    return res
+    # Preserve permission-denied behavior without looking up a project. An
+    # unauthorized caller must not learn whether a scene exists.
+    if allowed is not None and body.tool_name not in allowed:
+        return await call_pascal_mcp_tool(
+            body.tool_name,
+            body.arguments,
+            allowed_tools=allowed,
+        )
+
+    project_id = (body.project_id or "").strip()
+    if not project_id:
+        raise HTTPException(
+            status_code=422,
+            detail="project_id is required so the MCP call can bind to the persisted canonical scene",
+        )
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Không tìm thấy dự án")
+    if body.expected_revision is not None and body.expected_revision != project.revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "REVISION_MISMATCH",
+                "project_id": project.project_id,
+                "expected_revision": body.expected_revision,
+                "current_revision": project.revision,
+            },
+        )
+
+    scene_snapshot = project.pascal_scene_json
+    if not isinstance(scene_snapshot, dict) or not scene_snapshot.get("nodes"):
+        sync_result = await sync_canonical_to_pascal(project)
+        scene_snapshot = sync_result.get("sceneJson") or sync_result.get("scene")
+        if not sync_result.get("ok") or not isinstance(scene_snapshot, dict) or not scene_snapshot.get("nodes"):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "CANONICAL_SCENE_SYNC_FAILED",
+                    "project_id": project.project_id,
+                    "revision": project.revision,
+                    "error": sync_result.get("error", "Pascal scene snapshot is unavailable"),
+                },
+            )
+
+    result = await call_pascal_mcp_tool(
+        body.tool_name,
+        body.arguments,
+        allowed_tools=allowed,
+        scene_json=scene_snapshot,
+    )
+    return {
+        **result,
+        "project_id": project.project_id,
+        "revision": project.revision,
+        "scene_source": "persisted_canonical_project",
+    }
 
 
 # ==============================================================================
@@ -1611,6 +1670,18 @@ async def api_assign_asset_to_furniture(project_id: str, object_id: str, body: A
     furniture.normalized_glb = metadata.normalized_glb
     furniture.material_slots = metadata.material_slots
     furniture.source_url = metadata.source_url
+    furniture.sizing_policy = metadata.sizing_policy
+    furniture.uniform_scale_range = metadata.uniform_scale_range
+    furniture.parametric_axes = metadata.parametric_axes
+    furniture.original_dimensions_mm = list(metadata.dimensions_mm)
+    # Registry dimensions use GLB axes [width/X, height/Y, depth/Z]. A fixed-size
+    # product is authoritative: update the scene footprint instead of distorting it.
+    if metadata.sizing_policy == "FIXED_SIZE" and len(metadata.dimensions_mm) >= 3:
+        width_mm, height_mm, depth_mm = metadata.dimensions_mm[:3]
+        if width_mm > 0 and height_mm > 0 and depth_mm > 0:
+            furniture.width_mm = width_mm
+            furniture.height_mm = height_mm
+            furniture.depth_mm = depth_mm
     sync_res = await sync_canonical_to_pascal(project)
     if sync_res.get("ok") and sync_res.get("sceneJson"):
         project.pascal_scene_json = sync_res["sceneJson"]

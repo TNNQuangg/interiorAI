@@ -84,9 +84,15 @@ if ($portOwner) {
 }
 
 if (-not (Get-ListeningProcessId -Port $PostgresPort)) {
-    if (-not (Test-Path $StartPostgresCmd)) {
-        throw "The existing embedded PostgreSQL launcher was not found at '$StartPostgresCmd'. No database was created."
-    }
+    $existingCluster = Join-Path $InstanceRoot 'db\PG_VERSION'
+    if (-not (Test-Path -LiteralPath $StartPostgresCmd)) {
+        if (-not (Test-Path -LiteralPath $existingCluster)) {
+            throw "Neither an existing PostgreSQL cluster nor its launcher was found in '$InstanceRoot'. No database was created."
+        }
+        # Paperclip's server owns the embedded-postgres lifecycle on source installs.
+        # Its shutdown also stops PostgreSQL; a separate scheduled task is optional.
+        Write-Host "Existing PostgreSQL cluster found. Paperclip will reopen its embedded database." -ForegroundColor Yellow
+    } else {
     $postgresTask = Get-ScheduledTask -TaskName "AtelierEmbeddedPostgres" -ErrorAction SilentlyContinue
     $expectedLauncher = [System.IO.Path]::GetFullPath($StartPostgresCmd)
     $taskOwnsExistingInstance = $false
@@ -103,6 +109,7 @@ if (-not (Get-ListeningProcessId -Port $PostgresPort)) {
     Start-ScheduledTask -TaskName "AtelierEmbeddedPostgres"
     if (-not (Wait-ForPort -Port $PostgresPort -Seconds 30)) {
         throw "Embedded PostgreSQL did not become ready on port 54329 within 30 seconds. Its data directory was not modified by this script."
+    }
     }
 } else {
     Write-Host "Embedded PostgreSQL is already listening on port 54329."

@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "valid": true,
+  "itemCount": 8,
+  "benchNode": "item_gut0zyozqsat9m8u",
+  "artifactCount": 14,
+  "issues": [
+    "door_blocked"
+  ]
+}

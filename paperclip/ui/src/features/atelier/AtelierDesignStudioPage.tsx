@@ -46,7 +46,7 @@ export function AtelierDesignStudioPage() {
     cameraPreset, setCameraPreset, lightingPreset, setLightingPreset,
     busyMessage, errorMessage, handleSendChat,
     handleAnswerQuestion, handleProposalDecision, handleRestoreRevision,
-    handleUpdateFurnitureField, handleSaveScene, handleExport, handleAssignAsset,
+    handleUpdateFurnitureField, handleSaveScene, handleExport, handleAssignAsset, handleImportAssetAndAssign,
     handleRequestSmartFit, handleRequestPlacementOptions, handleCreatePlacementProposal,
   } = useAtelierStudio();
 
@@ -158,7 +158,7 @@ export function AtelierDesignStudioPage() {
             {inspectorOpen ? (
               <div className="dock-column inspector-column">
                 <button className="dock-resize-handle" type="button" onPointerDown={(event) => beginResize("inspector", event)} aria-label="Thay đổi chiều rộng Inspector" />
-                <ObjectInspector project={project} assetLibrary={assetLibrary} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onUpdateFurnitureField={handleUpdateFurnitureField} onCommitCanvasPosition={() => void handleSaveScene()} onAssignAsset={handleAssignAsset} onOpenAICopilot={() => setAssistantOpen(true)} onRequestSmartFit={handleRequestSmartFit} onRequestPlacementOptions={handleRequestPlacementOptions} onCreatePlacementProposal={handleCreatePlacementProposal} onClose={() => setInspectorOpen(false)} savingScene={Boolean(busyMessage?.includes("lưu"))} />
+                <ObjectInspector project={project} assetLibrary={assetLibrary} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onUpdateFurnitureField={handleUpdateFurnitureField} onCommitCanvasPosition={() => void handleSaveScene()} onAssignAsset={handleAssignAsset} onImportAsset={handleImportAssetAndAssign} onOpenAICopilot={() => setAssistantOpen(true)} onRequestSmartFit={handleRequestSmartFit} onRequestPlacementOptions={handleRequestPlacementOptions} onCreatePlacementProposal={handleCreatePlacementProposal} onClose={() => setInspectorOpen(false)} savingScene={Boolean(busyMessage?.includes("lưu"))} />
               </div>
             ) : null}
 

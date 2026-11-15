@@ -32,6 +32,34 @@ DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "atelier.db"
 
 
+# Pascal's MCP surface evolves independently from persisted Agent records. Keep
+# this migration deliberately explicit: unknown custom tools are preserved and
+# the gateway will report them as unavailable, while known legacy names are
+# translated to the current v1.0.7 registry during startup.
+LEGACY_MCP_TOOL_REPLACEMENTS: Dict[str, List[str]] = {
+    "get_scene_info": ["get_scene"],
+    "list_nodes_by_type": ["find_by_type"],
+    "create_building": ["place_building"],
+    "update_node": ["move_node"],
+    "delete_nodes": ["delete_node"],
+    "move_items": ["move_node"],
+    "swap_item": ["search_assets", "delete_node", "place_items"],
+    "set_zone_material": ["paint"],
+    "apply_preset_material": ["paint"],
+}
+
+
+def normalize_mcp_tool_allowlist(tool_names: List[str]) -> List[str]:
+    """Replace known legacy Pascal tool names without dropping custom tools."""
+    normalized: List[str] = []
+    for name in tool_names:
+        replacements = LEGACY_MCP_TOOL_REPLACEMENTS.get(name, [name])
+        for replacement in replacements:
+            if replacement not in normalized:
+                normalized.append(replacement)
+    return normalized
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -559,7 +587,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "(tỷ lệ bản vẽ, công năng, ngân sách, phong cách), sinh thẻ câu hỏi tương tác (ask_user), "
             "điều phối các Agent chuyên gia và tổng hợp phương án A/B/C kèm bảng so sánh Trước/Sau."
         ),
-        "allowed_mcp_tools": ["get_scene_info", "list_nodes_by_type", "verify_scene", "check_collisions"],
+        "allowed_mcp_tools": ["get_scene", "find_by_type", "verify_scene", "check_collisions"],
         "permissions": {"can_ask_user": True, "can_propose_scene": True, "direct_commit": False},
     },
     {
@@ -575,7 +603,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Trích xuất tường, cửa đi, cửa sổ, vùng phòng và chữ kích thước từ DXF/PDF/PNG. "
             "Nếu bản vẽ ảnh chưa có tỷ lệ chuẩn (mm/px), bắt buộc dừng và gọi ask_user để người dùng xác nhận 1 cạnh."
         ),
-        "allowed_mcp_tools": ["get_scene_info", "verify_scene"],
+        "allowed_mcp_tools": ["get_scene", "verify_scene"],
         "permissions": {"can_ask_user": True, "can_propose_scene": True, "direct_commit": False},
     },
     {
@@ -592,8 +620,8 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Không bao giờ phá hủy tường chịu lực khi chưa được người dùng phê duyệt."
         ),
         "allowed_mcp_tools": [
-            "create_building", "create_room", "add_wall", "add_door", "add_window",
-            "update_node", "delete_nodes", "verify_scene", "export_json"
+            "get_scene", "place_building", "create_room", "add_wall", "add_door", "add_window",
+            "move_node", "delete_node", "verify_scene", "export_json"
         ],
         "permissions": {"can_ask_user": False, "can_propose_scene": True, "direct_commit": False},
     },
@@ -610,7 +638,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Tư vấn bảng màu sơn tường (Dulux/Jotun), tường điểm nhấn (Accent Wall), gạch lát sàn/ốp tường "
             "(An Cường, Eurotile, Đồng Tâm) và gọi công cụ paint / set_zone_material trong Pascal MCP."
         ),
-        "allowed_mcp_tools": ["paint", "set_zone_material", "search_materials", "apply_preset_material"],
+        "allowed_mcp_tools": ["get_scene", "paint", "search_materials", "verify_scene"],
         "permissions": {"can_ask_user": True, "can_propose_scene": True, "direct_commit": False},
     },
     {
@@ -626,7 +654,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Đề xuất bố cục nội thất Phương án A/B/C, kiểm tra vùng quét cửa mở, đảm bảo hành lang đi lại >= 750mm "
             "và kiểm tra kích thước đồ nội thất lọt cửa phòng."
         ),
-        "allowed_mcp_tools": ["place_items", "move_items", "swap_item", "check_collisions", "search_assets"],
+        "allowed_mcp_tools": ["get_scene", "place_items", "move_node", "delete_node", "check_collisions", "search_assets", "verify_scene"],
         "permissions": {"can_ask_user": True, "can_propose_scene": True, "direct_commit": False},
     },
     {
@@ -642,7 +670,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Thực thi công thức tính bóc tách khối lượng xác định (sơn trừ lỗ mở, làm tròn thùng sơn & thùng gạch ceil, "
             "hao hụt vật tư, nhân công, thuế VAT 8%). Tuyệt đối không tự bịa giá bằng LLM."
         ),
-        "allowed_mcp_tools": ["get_scene_info", "list_nodes_by_type"],
+        "allowed_mcp_tools": ["get_scene", "find_by_type", "export_json"],
         "permissions": {"can_ask_user": True, "can_propose_scene": False, "direct_commit": False},
     },
     {
@@ -658,7 +686,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
             "Tra cứu sản phẩm từ catalog_vn.csv theo kích thước và ngân sách, kiểm tra lọt lòng phòng "
             "và đề xuất thay thế trực tiếp vào Scene 3D."
         ),
-        "allowed_mcp_tools": ["search_assets", "swap_item", "check_collisions"],
+        "allowed_mcp_tools": ["get_scene", "search_assets", "delete_node", "place_items", "check_collisions", "verify_scene"],
         "permissions": {"can_ask_user": False, "can_propose_scene": True, "direct_commit": False},
     },
     {
@@ -673,7 +701,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
         "system_prompt": (
             "Chụp phối cảnh từ góc camera khóa cố định và kiểm tra đối chiếu với hình học 3D gốc để không thêm/bớt cửa sổ hoặc đổi kết cấu."
         ),
-        "allowed_mcp_tools": ["get_scene_info", "verify_scene"],
+        "allowed_mcp_tools": ["get_scene", "verify_scene", "view_scene", "export_glb"],
         "permissions": {"can_ask_user": False, "can_propose_scene": False, "direct_commit": False},
     },
     {
@@ -686,7 +714,7 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
         "version": "1.0.0",
         "confidence_threshold": 0.99,
         "system_prompt": "Kiểm tra độc lập artifact scene và ảnh render; chỉ phát QA report PASS/FAIL, không tạo ảnh và không tự phê duyệt.",
-        "allowed_mcp_tools": ["get_scene_info", "verify_scene"],
+        "allowed_mcp_tools": ["get_scene", "verify_scene", "check_collisions"],
         "permissions": {"can_ask_user": False, "can_propose_scene": False, "direct_commit": False},
     },
 ]
@@ -1175,8 +1203,23 @@ def init_db() -> None:
             )
         else:
             current_payload = json.loads(exists["payload_json"]) if "payload_json" in exists.keys() else {}
+            changed = False
             if current_payload.get("paperclip_agent_key") != agent_payload["paperclip_agent_key"]:
                 current_payload["paperclip_agent_key"] = agent_payload["paperclip_agent_key"]
+                changed = True
+            current_tools = current_payload.get("allowed_mcp_tools")
+            if isinstance(current_tools, list):
+                migrated_tools = normalize_mcp_tool_allowlist(current_tools)
+                # Default agents may gain supported tools as the execution
+                # contract evolves. Merge the checked seed baseline while
+                # retaining any valid custom additions in persisted records.
+                for seed_tool in agent_payload.get("allowed_mcp_tools", []):
+                    if seed_tool not in migrated_tools:
+                        migrated_tools.append(seed_tool)
+                if migrated_tools != current_tools:
+                    current_payload["allowed_mcp_tools"] = migrated_tools
+                    changed = True
+            if changed:
                 cur.execute(
                     "UPDATE agents SET payload_json = ?, updated_at = ? WHERE agent_id = ?",
                     (json.dumps(current_payload, ensure_ascii=False), now_iso(), a["agent_id"]),

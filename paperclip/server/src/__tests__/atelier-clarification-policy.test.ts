@@ -41,4 +41,16 @@ describe("Atelier clarification policy", () => {
     expect(instructions).toContain("Không đánh dấu task done");
     expect(instructions).toContain("đưa 2–3 phương án");
   });
+
+  it("requires a durable recovery transition instead of a hand-back comment", () => {
+    const instructions = buildAtelierAgentInstructions({
+      agentKey: "agent_geometry",
+      agentName: "Geometry & BIM Specialist",
+      roleSummary: "Xác minh canonical scene.",
+    });
+    expect(instructions).toContain("Không được chỉ viết “hand-back”");
+    expect(instructions).toContain("recoveryIntent=status_only");
+    expect(instructions).toContain("/recovery-actions/resolve");
+    expect(instructions).toContain("sourceIssueStatus=todo");
+  });
 });

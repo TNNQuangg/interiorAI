@@ -28,6 +28,7 @@ const DEFAULT_CONFIG: TelegramBridgeConfig = {
   userPairings: [],
   pairingCodes: [],
   chatTaskMappings: [],
+  chatProjectSelections: [],
   lastUpdateId: 0,
   stats: {
     incomingMessages: 0,
@@ -40,6 +41,7 @@ const DEFAULT_CONFIG: TelegramBridgeConfig = {
 
 let currentConfig: TelegramBridgeConfig = { ...DEFAULT_CONFIG };
 let isLoaded = false;
+let configWriteQueue: Promise<void> = Promise.resolve();
 
 export function addTelegramLog(level: "info" | "warn" | "error", message: string, details?: Record<string, unknown> | null): void {
   const entry: TelegramLogEntry = {
@@ -78,6 +80,7 @@ export async function loadTelegramConfig(): Promise<TelegramBridgeConfig> {
       userPairings: parsed.userPairings || [],
       pairingCodes: parsed.pairingCodes || [],
       chatTaskMappings: parsed.chatTaskMappings || [],
+      chatProjectSelections: parsed.chatProjectSelections || [],
     };
     // Also support environment variable fallback if not set in config
     if (!currentConfig.botToken && (process.env.TELEGRAM_BOT_TOKEN || process.env.ATELIER_TELEGRAM_BOT_TOKEN)) {
@@ -95,7 +98,8 @@ export async function loadTelegramConfig(): Promise<TelegramBridgeConfig> {
   return currentConfig;
 }
 
-export async function saveTelegramConfig(updates?: Partial<TelegramBridgeConfig>): Promise<TelegramBridgeConfig> {
+export async function saveTelegramConfig(updates?: Partial<TelegramBridgeConfig>, requirePersistence = false): Promise<TelegramBridgeConfig> {
+  const previousConfig = currentConfig;
   if (updates) {
     currentConfig = {
       ...currentConfig,
@@ -107,11 +111,24 @@ export async function saveTelegramConfig(updates?: Partial<TelegramBridgeConfig>
     };
   }
 
-  try {
+  const updatedConfig = currentConfig;
+  const snapshot = JSON.stringify(updatedConfig, null, 2);
+  // Polling checkpoints and chat commands share this file. Serialize atomic
+  // replacements so a concurrent stats save cannot truncate a persisted choice.
+  const write = configWriteQueue.then(async () => {
     await fs.mkdir(path.dirname(CONFIG_FILE_PATH), { recursive: true });
-    await fs.writeFile(CONFIG_FILE_PATH, JSON.stringify(currentConfig, null, 2), "utf-8");
+    await fs.writeFile(`${CONFIG_FILE_PATH}.tmp`, snapshot, "utf-8");
+    await fs.rename(`${CONFIG_FILE_PATH}.tmp`, CONFIG_FILE_PATH);
+  });
+  configWriteQueue = write.catch(() => {});
+  try {
+    await write;
   } catch (err: any) {
     addTelegramLog("error", "Failed to save Telegram config to disk", { error: String(err) });
+    if (requirePersistence) {
+      if (currentConfig === updatedConfig) currentConfig = previousConfig;
+      throw new Error("Could not persist Telegram project selection. Check configuration storage and retry /project.");
+    }
   }
 
   return currentConfig;

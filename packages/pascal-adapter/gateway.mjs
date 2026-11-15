@@ -6,29 +6,48 @@
  * canonical <-> Pascal scene synchronization, and scene verification.
  */
 import fs from 'node:fs'
+import { canonicalFurnitureObject, canonicalSyncBrief } from './canonical-furniture.mjs'
+import { compileGeometryScript } from '@pascal-app/geometry-script/compile'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { createPascalMcpServer, SceneBridge } from '@pascal-app/mcp'
 
 async function runGatewayCommand(payload) {
+  const action = payload.action || 'list_tools'
+  if (action === 'call_tool' && payload.sceneSnapshot == null) {
+    throw new Error('Canonical scene snapshot is required for call_tool; refusing to use the default scaffold')
+  }
   const bridge = new SceneBridge()
   bridge.loadDefault()
 
-  if (payload.sceneSnapshot && payload.sceneSnapshot.nodes && Object.keys(payload.sceneSnapshot.nodes).length > 0) {
-    try {
-      bridge.loadScene(payload.sceneSnapshot)
-    } catch {
-      // Fallback to default if snapshot is empty/partial
+  if (payload.sceneSnapshot != null) {
+    if (!payload.sceneSnapshot.nodes || Object.keys(payload.sceneSnapshot.nodes).length === 0) {
+      throw new Error('Supplied scene snapshot has no nodes; refusing to substitute a default scene')
     }
+    bridge.loadJSON(payload.sceneSnapshot)
   }
 
-  const server = createPascalMcpServer({ bridge })
+  const artifacts = {...(payload.sceneSnapshot?.atelier_artifacts || {})}
+  // Compilation is available only for our generated canonical-sync modules.
+  // Generic call_tool requests do not gain an arbitrary-code execution host.
+  const geometryScripts = payload.action === 'sync_from_canonical' ? {
+    async compile(input) {
+      const compiled = await compileGeometryScript({...input, usageShape: true})
+      return {...compiled, glb: new Uint8Array(compiled.glb)}
+    },
+    async storeArtifact({sha256, bytes, mimeType}) {
+      artifacts[sha256] = {mimeType, base64: Buffer.from(bytes).toString('base64')}
+      return sha256
+    },
+    async readArtifact({sha256}) {
+      return artifacts[sha256] ? Buffer.from(artifacts[sha256].base64, 'base64') : null
+    },
+  } : undefined
+  const server = createPascalMcpServer({ bridge, geometryScripts })
   const [srvT, cliT] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'atelier-mcp-gateway', version: '1.0.0' })
   await Promise.all([server.connect(srvT), client.connect(cliT)])
 
   try {
-    const action = payload.action || 'list_tools'
-
     if (action === 'list_tools') {
       const res = await client.listTools()
       return {
@@ -65,6 +84,13 @@ async function runGatewayCommand(payload) {
       } catch {
         sceneJson = null
       }
+      if (sceneJson && Object.keys(artifacts).length > 0) {
+        sceneJson.atelier_artifacts = artifacts
+        sceneJson.atelier_canonical_node_ids = Object.fromEntries(
+          Object.entries(payload.sceneSnapshot?.atelier_canonical_node_ids || {})
+            .filter(([, nodeId]) => sceneJson.nodes?.[nodeId]),
+        )
+      }
       return {
         ok: !toolRes.isError,
         toolName: payload.toolName,
@@ -72,16 +98,26 @@ async function runGatewayCommand(payload) {
         verification: verify.structuredContent,
         collisions: collisions.structuredContent,
         scene: sceneJson,
+        sceneJson,
       }
     }
 
     if (action === 'sync_from_canonical') {
+      const checkedCall = async (request) => {
+        const result = await client.callTool(request)
+        if (result.isError || result.structuredContent?.ok === false) {
+          throw new Error(`Pascal ${request.name} failed: ${JSON.stringify(result.structuredContent || result.content)}`)
+        }
+        return result
+      }
       // Build full Pascal scene from ATELIER AI Canonical Project Schema (mm -> m)
       const canonical = payload.canonical || {}
-      await client.callTool({
+      await checkedCall({
         name: 'clear_scene',
         arguments: { reason: 'Sync from ATELIER AI Canonical Model' },
       })
+      bridge.setActiveScene({id: canonical.project_id || 'canonical-sync', name: canonical.name || 'Canonical scene',
+        projectId: null, ownerId: null, thumbnailUrl: null, version: canonical.revision || 1, graphHash: null})
 
       const executedCalls = []
       const rooms = canonical.rooms || []
@@ -118,7 +154,7 @@ async function runGatewayCommand(payload) {
               sillHeight: Number(((w.sill_height_mm || 900) / 1000).toFixed(3)),
             }))
 
-          const createRoomRes = await client.callTool({
+          const createRoomRes = await checkedCall({
             name: 'create_room',
             arguments: {
               name: room.name || 'Living Room',
@@ -134,7 +170,7 @@ async function runGatewayCommand(payload) {
           // Paint walls & floor if material refs provided
           const createdWallIds = createRoomRes.structuredContent?.wallIds || []
           if (createdWallIds.length > 0 && room.wall_pascal_ref) {
-            const paintWallsRes = await client.callTool({
+            const paintWallsRes = await checkedCall({
               name: 'paint',
               arguments: {
                 targets: createdWallIds,
@@ -158,24 +194,22 @@ async function runGatewayCommand(payload) {
         }
       }
 
-      // Set design brief so Pascal allows item placement
+      const furnitureNodeIds = {}
+      // Record the synchronization brief before authoring measured geometry.
       if (furniture.length > 0) {
-        const itemsToPlace = furniture.map((item) => ({
-          assetId: item.pascal_asset_id || 'sofa',
-          x: Number(((item.x_mm || 2000) / 1000).toFixed(3)),
-          z: Number(((item.y_mm || 2500) / 1000).toFixed(3)),
-          rotation: Number((((item.rotation_deg || 0) * Math.PI) / 180).toFixed(4)),
-        }))
-        const placeRes = await client.callTool({
-          name: 'place_items',
-          arguments: { items: itemsToPlace },
-        })
-        executedCalls.push({ tool: 'place_items', result: placeRes.structuredContent })
+        await checkedCall({name: 'design_brief', arguments: canonicalSyncBrief()})
+        for (const item of furniture) {
+          const placed = await checkedCall({name: 'add_object', arguments: canonicalFurnitureObject(item)})
+          const nodeId = placed.structuredContent?.nodeId
+          if (!nodeId) throw new Error(`Pascal add_object returned no nodeId for ${item.id}: ${JSON.stringify(placed.structuredContent)}`)
+          furnitureNodeIds[item.id] = nodeId
+          executedCalls.push({tool: 'add_object', canonicalId: item.id, result: placed.structuredContent})
+        }
       }
 
-      const verify = await client.callTool({ name: 'verify_scene', arguments: {} })
-      const collisions = await client.callTool({ name: 'check_collisions', arguments: {} })
-      const exported = await client.callTool({ name: 'export_json', arguments: { pretty: false } })
+      const verify = await checkedCall({ name: 'verify_scene', arguments: {} })
+      const collisions = await checkedCall({ name: 'check_collisions', arguments: {} })
+      const exported = await checkedCall({ name: 'export_json', arguments: { pretty: false } })
       let sceneJson = {}
       try {
         sceneJson = JSON.parse(exported.structuredContent?.json || '{}')
@@ -183,12 +217,20 @@ async function runGatewayCommand(payload) {
         sceneJson = {}
       }
 
+      // Self-contained artifacts survive the short-lived gateway process;
+      // canonical SQLite persistence remains the API's atomic responsibility.
+      sceneJson.atelier_artifacts = artifacts
+      sceneJson.atelier_canonical_node_ids = furnitureNodeIds
+
       return {
         ok: true,
         executedCalls,
+        furnitureNodeIds,
+        geometryRepresentation: 'authored_bench_and_canonical_furniture_envelopes',
         verification: verify.structuredContent,
         collisions: collisions.structuredContent,
         scene: sceneJson,
+        sceneJson,
       }
     }
 

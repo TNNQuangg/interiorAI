@@ -24,6 +24,11 @@ import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { issueService } from "../services/issues.js";
 import { approvalReadSqlCondition, canActorReadApproval } from "../services/authorization.js";
 import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-path-recovery.js";
+import {
+  ATELIER_TELEGRAM_FINAL_APPROVAL_KIND,
+  buildAtelierTelegramApprovalDecisionPatch,
+  type AtelierTelegramApprovalDecision,
+} from "../services/atelier-telegram/approval-gate.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -39,6 +44,15 @@ function isStatusOnlyRecoveryContext(contextSnapshot: unknown) {
     context.allowDeliverableWork === false &&
     context.allowDocumentUpdates === false &&
     context.resumeRequiresNormalModel === true;
+}
+
+function isAtelierTelegramFinalAcceptance(payload: unknown) {
+  return Boolean(
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    (payload as Record<string, unknown>).kind === ATELIER_TELEGRAM_FINAL_APPROVAL_KIND,
+  );
 }
 
 export function approvalRoutes(
@@ -169,6 +183,65 @@ export function approvalRoutes(
     }
     assertCompanyAccess(req, approval.companyId);
     return approval;
+  }
+
+  async function settleAtelierTelegramApprovalIssues(input: {
+    approval: { id: string; companyId: string };
+    decision: AtelierTelegramApprovalDecision;
+    decisionNote?: string | null;
+    actorUserId: string;
+  }) {
+    const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(input.approval.id);
+    for (const linkedIssue of linkedIssues) {
+      const issue = await issuesSvc.getById(linkedIssue.id);
+      if (!issue || issue.companyId !== input.approval.companyId) continue;
+      const patch = buildAtelierTelegramApprovalDecisionPatch({
+        issue,
+        approvalId: input.approval.id,
+        decision: input.decision,
+        decisionNote: input.decisionNote,
+      });
+      if (!patch) continue;
+      const updated = await issuesSvc.update(issue.id, {
+        companyGuard: input.approval.companyId,
+        ...patch,
+        actorUserId: input.actorUserId,
+      });
+      if (updated?.status === "in_progress" && updated.assigneeAgentId) {
+        try {
+          await heartbeat.wakeup(updated.assigneeAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: input.decision === "rejected"
+              ? "approval_rejected"
+              : "approval_revision_requested",
+            payload: {
+              approvalId: input.approval.id,
+              approvalStatus: input.decision,
+              issueId: updated.id,
+            },
+            requestedByActorType: "user",
+            requestedByActorId: input.actorUserId,
+            contextSnapshot: {
+              source: `approval.${input.decision}`,
+              approvalId: input.approval.id,
+              approvalStatus: input.decision,
+              issueId: updated.id,
+              taskId: updated.id,
+              wakeReason: input.decision === "rejected"
+                ? "approval_rejected"
+                : "approval_revision_requested",
+            },
+          });
+        } catch (err) {
+          logger.warn(
+            { err, approvalId: input.approval.id, issueId: updated.id },
+            "failed to wake Atelier Telegram task after approval revision",
+          );
+        }
+      }
+    }
+    return linkedIssues;
   }
 
   async function assertApprovalAccessAllowed(req: Request, res: any, companyId: string) {
@@ -304,13 +377,19 @@ export function approvalRoutes(
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
 
     if (applied) {
-      const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
+      const linkedIssues = await settleAtelierTelegramApprovalIssues({
+        approval,
+        decision: "approved",
+        decisionNote: req.body.decisionNote,
+        actorUserId: decidedByUserId,
+      });
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
       const primaryIssueId = linkedIssueIds[0] ?? null;
       const lostReviewIssueIds = await lostReviewPathIssueIds(approval.companyId, linkedIssues);
       const primaryReviewPathContext = primaryIssueId && lostReviewIssueIds.has(primaryIssueId)
         ? approvalReviewPathContext(approval.id)
         : null;
+      const isAtelierFinalAcceptance = isAtelierTelegramFinalAcceptance(approval.payload);
 
       await logActivity(db, {
         companyId: approval.companyId,
@@ -327,7 +406,7 @@ export function approvalRoutes(
       });
 
       let primaryReviewPathWakeCovered = false;
-      if (approval.requestedByAgentId) {
+      if (approval.requestedByAgentId && !isAtelierFinalAcceptance) {
         try {
           const wakeRun = await heartbeat.wakeup(approval.requestedByAgentId, {
             source: "automation",
@@ -393,17 +472,19 @@ export function approvalRoutes(
         }
       }
 
-      await queueAdditionalApprovalReviewPathWakes({
-        approvalId: approval.id,
-        approvalStatus: approval.status,
-        companyId: approval.companyId,
-        linkedIssues,
-        lostIssueIds: lostReviewIssueIds,
-        alreadyWoken: primaryReviewPathWakeCovered && approval.requestedByAgentId && primaryIssueId
-          ? { agentId: approval.requestedByAgentId, issueId: primaryIssueId }
-          : null,
-        requestedByUserId: req.actor.userId ?? "board",
-      });
+      if (!isAtelierFinalAcceptance) {
+        await queueAdditionalApprovalReviewPathWakes({
+          approvalId: approval.id,
+          approvalStatus: approval.status,
+          companyId: approval.companyId,
+          linkedIssues,
+          lostIssueIds: lostReviewIssueIds,
+          alreadyWoken: primaryReviewPathWakeCovered && approval.requestedByAgentId && primaryIssueId
+            ? { agentId: approval.requestedByAgentId, issueId: primaryIssueId }
+            : null,
+          requestedByUserId: req.actor.userId ?? "board",
+        });
+      }
     }
 
     res.json(redactApprovalPayload(approval));
@@ -420,8 +501,14 @@ export function approvalRoutes(
     const { approval, applied } = await svc.reject(id, decidedByUserId, req.body.decisionNote);
 
     if (applied) {
-      const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
+      const linkedIssues = await settleAtelierTelegramApprovalIssues({
+        approval,
+        decision: "rejected",
+        decisionNote: req.body.decisionNote,
+        actorUserId: decidedByUserId,
+      });
       const lostReviewIssueIds = await lostReviewPathIssueIds(approval.companyId, linkedIssues);
+      const isAtelierFinalAcceptance = isAtelierTelegramFinalAcceptance(approval.payload);
       await logActivity(db, {
         companyId: approval.companyId,
         actorType: "user",
@@ -431,14 +518,16 @@ export function approvalRoutes(
         entityId: approval.id,
         details: { type: approval.type },
       });
-      await queueAdditionalApprovalReviewPathWakes({
-        approvalId: approval.id,
-        approvalStatus: approval.status,
-        companyId: approval.companyId,
-        linkedIssues,
-        lostIssueIds: lostReviewIssueIds,
-        requestedByUserId: req.actor.userId ?? "board",
-      });
+      if (!isAtelierFinalAcceptance) {
+        await queueAdditionalApprovalReviewPathWakes({
+          approvalId: approval.id,
+          approvalStatus: approval.status,
+          companyId: approval.companyId,
+          linkedIssues,
+          lostIssueIds: lostReviewIssueIds,
+          requestedByUserId: req.actor.userId ?? "board",
+        });
+      }
     }
 
     res.json(redactApprovalPayload(approval));
@@ -456,6 +545,13 @@ export function approvalRoutes(
       }
       const decidedByUserId = req.actor.userId ?? "board";
       const approval = await svc.requestRevision(id, decidedByUserId, req.body.decisionNote);
+
+      await settleAtelierTelegramApprovalIssues({
+        approval,
+        decision: "revision_requested",
+        decisionNote: req.body.decisionNote,
+        actorUserId: decidedByUserId,
+      });
 
       await logActivity(db, {
         companyId: approval.companyId,

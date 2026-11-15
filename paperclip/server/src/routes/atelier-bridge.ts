@@ -1,3 +1,4 @@
+import { createAtelierSceneHandler } from "./atelier-scene.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -23,12 +24,14 @@ import {
   projects,
 } from "@paperclipai/db";
 import { insertIssueComment } from "../services/issue-comment-writes.js";
-import { accessService, issueService, projectService } from "../services/index.js";
+import { accessService, heartbeatService, issueService, projectService } from "../services/index.js";
+import { createAtelierHandoffTask } from "../services/atelier-workflow-handoff.js";
 import { persistActivity, publishActivity } from "../services/activity-log.js";
 import { conflict, forbidden, unprocessable } from "../errors.js";
 import { assertBoard, assertBoardOrAgent, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { issueRecoveryActionService } from "../services/issue-recovery-actions.js";
-import { agentInstructionsService } from "../services/agent-instructions.js";
+import { agentInstructionsBundleMode, agentInstructionsService } from "../services/agent-instructions.js";
+import { agentInstructionRevisionService } from "../services/agent-instruction-revisions.js";
 import {
   ATELIER_WORKFLOW_STAGES,
   assertAtelierHandoffAllowed,
@@ -238,7 +241,7 @@ const ATELIER_SPECIALIST_AGENTS = [
     title: "Chuyên Gia Dựng Hình 3D Pascal & Xuất CAD/BIM",
     icon: "box",
     capabilities:
-      "Tạo và kiểm tra tường, cửa, sàn, trần trong Pascal SceneGraph qua MCP Gateway; xuất hồ sơ kỹ thuật DXF R2007, GLB 3D, IFC4 theo đúng đơn vị mm.",
+      "Tạo và kiểm tra tường, cửa, sàn, trần trên canonical scene qua revision-checked REST API; bố trí lại nội thất đã duyệt qua PATCH /api/v1/projects/{scene_id}/furniture/layout; chỉ dùng Pascal MCP qua endpoint đã bind project snapshot để xác minh, rồi xuất DXF R2007, GLB 3D, IFC4 theo đúng đơn vị mm.",
     skills: [
       "pascal-scene-editing",
       "room-dimension-validation",
@@ -356,6 +359,17 @@ const ATELIER_SPECIALIST_AGENTS = [
   },
 ] as const;
 
+function atelierCodexAdapterConfig(atelierAgentKey: string) {
+  return {
+    engine: "cli",
+    command: "codex",
+    model: "gpt-5.6-luna",
+    modelReasoningEffort: "low",
+    dangerouslyBypassApprovalsAndSandbox: true,
+    atelierAgentKey,
+  };
+}
+
 export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBootstrapSummary> {
   if (bootstrapPromise) return bootstrapPromise;
 
@@ -413,9 +427,21 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
         if (found) {
           agentIdsByKey[spec.key] = found.id;
           if (spec.key === "agent_concierge") chiefArchitectId = found.id;
+          // Old/fresh ATELIER databases may still contain the retired HTTP
+          // bootstrap adapter. Migrate only that legacy shape so a model the
+          // operator selected on an existing Codex agent remains untouched.
+          const migrateLegacyHttpAdapter =
+            found.adapterType === "http" &&
+            (found.adapterConfig as Record<string, unknown> | null)?.atelierAgentKey === spec.key;
           await db
             .update(agents)
             .set({
+              ...(migrateLegacyHttpAdapter
+                ? {
+                    adapterType: "codex_local",
+                    adapterConfig: atelierCodexAdapterConfig(spec.key),
+                  }
+                : {}),
               capabilities: atelierCapabilitiesWithDecisionGate(spec.capabilities),
               permissions: {
                 requireProposalApprovalForSceneWrite: true,
@@ -450,12 +476,8 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
             lifecycleState: "ready",
             reportsTo: spec.key === "agent_concierge" ? null : chiefArchitectId,
             capabilities: atelierCapabilitiesWithDecisionGate(spec.capabilities),
-            adapterType: "http",
-            adapterConfig: {
-              endpoint: `${PYTHON_API_URL}/api/v1/chat/messages`,
-              mode: "lean_or_team",
-              atelierAgentKey: spec.key,
-            },
+            adapterType: "codex_local",
+            adapterConfig: atelierCodexAdapterConfig(spec.key),
             runtimeConfig: {
               skills: [...spec.skills],
               maxConcurrentSceneWrites: 1,
@@ -483,6 +505,15 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
       }
 
       const instructionService = agentInstructionsService(db);
+      const instructionRevisions = agentInstructionRevisionService(db);
+      const bootstrapInstructionActor = {
+        type: "board" as const,
+        userId: "local-board",
+        companyIds: [companyId],
+        memberships: [{ companyId, membershipRole: "owner", status: "active" }],
+        isInstanceAdmin: true,
+        source: "local_implicit" as const,
+      };
       const rosterAgentIds = Object.values(agentIdsByKey);
       const rosterAgents = await db.select().from(agents).where(and(
         eq(agents.companyId, companyId),
@@ -493,26 +524,42 @@ export async function ensureAtelierPaperclipBootstrap(db: Db): Promise<AtelierBo
         const spec = ATELIER_SPECIALIST_AGENTS.find((candidate) => candidate.key === agentKey);
         if (!spec) continue;
         const adapterConfig = (agent.adapterConfig as Record<string, unknown> | null) ?? {};
-        const priorPolicy = (agent.metadata as Record<string, unknown> | null)?.atelierClarificationPolicy as
-          | { version?: number; instructionStatus?: string }
-          | undefined;
+        const desiredInstructions = buildAtelierAgentInstructions({
+          agentKey: spec.key,
+          agentName: spec.name,
+          roleSummary: spec.capabilities,
+        });
         let nextAdapterConfig = adapterConfig;
-        let instructionStatus = priorPolicy?.version === ATELIER_CLARIFICATION_POLICY_VERSION
-          ? "installed"
-          : "existing_bundle_preserved";
+        let instructionStatus = "existing_bundle_preserved";
         if (!hasConfiguredInstructionsBundle(adapterConfig)) {
           const materialized = await instructionService.materializeManagedBundle(
             agent,
             {
-              "AGENTS.md": buildAtelierAgentInstructions({
-                agentKey: spec.key,
-                agentName: spec.name,
-                roleSummary: spec.capabilities,
-              }),
+              "AGENTS.md": desiredInstructions,
             },
             { entryFile: "AGENTS.md", replaceExisting: false },
           );
           nextAdapterConfig = materialized.adapterConfig;
+          instructionStatus = "installed";
+        } else if (agentInstructionsBundleMode(agent) !== "external") {
+          // Metadata alone is not evidence that the managed entry contains the
+          // current policy. Earlier bootstrap versions marked an existing bundle
+          // as installed without replacing its stale AGENTS.md. Compare the
+          // canonical bytes and commit through the revision service when needed.
+          const current = await instructionRevisions.readCommittedForRuntime({
+            companyId,
+            agentId: agent.id,
+          });
+          if (current?.content !== desiredInstructions) {
+            await instructionRevisions.commit({
+              companyId,
+              agentId: agent.id,
+              entryFile: current?.revision.entryFile ?? "AGENTS.md",
+              content: desiredInstructions,
+              baseRevisionId: current?.revision.id ?? null,
+              source: "api",
+            }, bootstrapInstructionActor);
+          }
           instructionStatus = "installed";
         }
         const currentMetadata = (agent.metadata as Record<string, unknown> | null) ?? {};
@@ -1196,7 +1243,7 @@ export function atelierBridgeRoutes(db: Db) {
       .digest("hex")
       .slice(0, 24);
     const originId = `atelier-handoff:${source.id}:${targetAgentKey}:${fingerprint}`;
-    const task = await issueService(db).create(boot.companyId, {
+    const { task, duplicate } = await createAtelierHandoffTask(db, boot.companyId, {
       projectId: source.projectId ?? boot.projectId,
       goalId: source.goalId,
       parentId: source.id,
@@ -1209,16 +1256,18 @@ export function atelierBridgeRoutes(db: Db) {
       assigneeAgentId: targetAgentId,
       createdByAgentId: actor.actorType === "agent" ? actor.agentId : null,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-      responsibleUserId: source.responsibleUserId ?? "local-board",
+      actorRunId: actor.runId,
+      actorResponsibleUserId: req.actor.userId ?? req.actor.onBehalfOfUserId ?? null,
       originKind: "manual",
       originId,
       blockedByIssueIds: ["done", "cancelled"].includes(source.status) ? [] : [source.id],
       idempotencyKey: originId,
       allowDuplicate: false,
-    });
+    }, actor, () => heartbeatService(db));
 
-    res.status(201).json({
+    res.status(duplicate ? 200 : 201).json({
       ok: true,
+      duplicate,
       source_agent_key: sourceAgentKey,
       target_agent_key: targetAgentKey,
       task,
@@ -1257,11 +1306,10 @@ export function atelierBridgeRoutes(db: Db) {
     const fingerprint = createHash("sha256").update(JSON.stringify({ brief })).digest("hex");
 
     let receiptId = "";
-    let project: Awaited<ReturnType<typeof projectsSvc.getById>> = null;
     let conversationIssueId = "";
     let publication: Awaited<ReturnType<typeof persistActivity>>["publication"] | null = null;
 
-    await db.transaction(async (tx) => {
+    const project = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptKey}, 0))`);
       const prior = await tx.select().from(activityLog).where(and(
         eq(activityLog.companyId, companyId),
@@ -1272,16 +1320,16 @@ export function atelierBridgeRoutes(db: Db) {
         if (prior.details?.fingerprint !== fingerprint) throw conflict("Project intake idempotency key was used with a different brief");
         receiptId = prior.id;
         conversationIssueId = typeof prior.details?.conversationIssueId === "string" ? prior.details.conversationIssueId : "";
-        project = await projectService(tx as unknown as Db).getById(prior.entityId);
+        const project = await projectService(tx as unknown as Db).getById(prior.entityId);
         if (!project) throw conflict("Previously created project is no longer available");
-        return;
+        return project;
       }
 
       const companyAgents = await tx.select().from(agents).where(eq(agents.companyId, companyId));
       const chief = companyAgents.find((agent) =>
         (agent.metadata as Record<string, unknown> | null)?.atelierAgentKey === "agent_concierge" ||
         agent.name.includes("Chief Architect") || agent.name.includes("Kiến Trúc Sư Trưởng"));
-      project = await projectService(tx as unknown as Db).create(companyId, {
+      const project = await projectService(tx as unknown as Db).create(companyId, {
         name: projectNameFromBrief(brief),
         description: brief,
         status: "backlog",
@@ -1308,6 +1356,7 @@ export function atelierBridgeRoutes(db: Db) {
       });
       receiptId = activity.activity.id;
       publication = activity.publication;
+      return project;
     });
 
     if (!project) throw new Error("Native Project creation did not return a project");
@@ -1537,198 +1586,26 @@ export function atelierBridgeRoutes(db: Db) {
   // 3. PASCAL 3D SCENE ADAPTER WITH VERSION CHECK & CONCURRENCY LOCK (SECTION 7)
   // Operations: scene.read, scene.propose, scene.validate, scene.preview, scene.apply, scene.restore
   // ============================================================================
+  const sceneHandler = createAtelierSceneHandler(PYTHON_API_URL, activeSceneWriteLocks, ensurePythonCadSidecarOnDemand);
   router.post("/atelier/scene", async (req, res) => {
-    const body = req.body ?? {};
-    const project_id = body.project_id || body.projectId;
-    if (!project_id) throw unprocessable("project_id is required for a scene operation");
-    const operation = body.operation || body.op;
-    const expected_revision = typeof body.expected_revision === "number" ? body.expected_revision : (typeof body.baseRevision === "number" ? body.baseRevision : undefined);
-    const patch = body.patch;
-    const proposal_id = body.proposal_id || body.proposalId;
-    const target_revision = body.target_revision || body.targetRevision;
-    const agent_key = body.agent_key || body.agentKey || "agent_geometry";
-
-    await ensurePythonCadSidecarOnDemand();
-
+    assertBoardOrAgent(req);
+    const nativeProjectId = req.body?.native_project_id;
+    if (typeof nativeProjectId !== "string" || !nativeProjectId.trim()) {
+      res.status(422).json({ ok: false, error: "native_project_id is required for scene access" }); return;
+    }
+    const project = await accessibleAtelierProject(req, res, nativeProjectId);
+    if (!project) return;
+    assertCompanyAccess(req, project.companyId);
     try {
-      // Fetch current canonical project from Python sidecar
-      const projRes = await fetch(`${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}`);
-      if (!projRes.ok) {
-        res.status(projRes.status).json({ ok: false, error: `Project ${project_id} not found` });
-        return;
-      }
-      const currentProject = (await projRes.json()) as {
-        id: string;
-        revision: number;
-        scale_confidence: string;
-        walls: unknown[];
-        openings: unknown[];
-        furniture: Array<Record<string, unknown>>;
-        surface_materials: Record<string, unknown>;
-      };
-
-      if (operation === "scene.read" || operation === "read") {
-        res.json({
-          ok: true,
-          operation: "scene.read",
-          scene_id: `pascal_${currentProject.id}`,
-          unit: "mm",
-          revision: currentProject.revision,
-          scale_confidence: currentProject.scale_confidence,
-          project: currentProject,
-          scene: currentProject,
-        });
-        return;
-      }
-
-      if (operation === "scene.validate" || operation === "validate") {
-        const estRes = await fetch(
-          `${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}/estimates`,
-        );
-        const estData = estRes.ok ? ((await estRes.json()) as Record<string, unknown>) : {};
-        const spatial = (estData.spatial_quality as Record<string, unknown>) ?? {
-          collision_free: true,
-          min_walkway_clearance_mm: 720,
-        };
-        res.json({
-          ok: true,
-          operation: "scene.validate",
-          scene_id: `pascal_${currentProject.id}`,
-          revision: currentProject.revision,
-          valid: true,
-          unit: "mm",
-          spatial_quality: spatial,
-          validation: {
-            walkway_clearance_ok: true,
-            collision_free: true,
-            min_walkway_clearance_mm: 720,
-          },
-        });
-        return;
-      }
-
-      // Mutating / proposing operations require the per-project single-writer lock
-      const existingLock = activeSceneWriteLocks.get(project_id);
-      if (existingLock && Date.now() - existingLock.acquiredAt < 15_000) {
-        res.status(409).json({
-          ok: false,
-          conflict: true,
-          reason: "concurrent_scene_mutation_blocked",
-          message: `Dự án ${project_id} đang được cập nhật bởi ${existingLock.holder}. Tối đa 1 tác vụ ghi Scene cùng lúc.`,
-        });
-        return;
-      }
-
-      activeSceneWriteLocks.set(project_id, { holder: agent_key, acquiredAt: Date.now() });
-      try {
-        // Optimistic Concurrency Control (OCC): verify expected_revision before applying
-        if (
-          typeof expected_revision === "number" &&
-          expected_revision !== currentProject.revision
-        ) {
-          res.status(409).json({
-            ok: false,
-            conflict: true,
-            reason: "revision_mismatch",
-            expected_revision,
-            current_revision: currentProject.revision,
-            message: `Xung đột phiên bản Scene: Bản nháp dựa trên Rev #${expected_revision} nhưng Scene hiện tại đã ở Rev #${currentProject.revision}. Cần đọc lại Scene trước khi áp dụng.`,
-          });
-          return;
-        }
-
-        if (operation === "scene.propose" || operation === "propose" || operation === "scene.preview" || operation === "preview") {
-          const msgText =
-            patch?.prompt ||
-            "Tôi thấy phòng hơi chật, hãy đề xuất đổi mẫu sofa ngắn hơn khoảng 30cm.";
-          const chatRes = await fetch(
-            `${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}/chat/messages`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ message: msgText }),
-            },
-          );
-          const chatJson = (await chatRes.json()) as Record<string, unknown>;
-          res.json({
-            ok: true,
-            operation,
-            scene_id: `pascal_${currentProject.id}`,
-            base_revision: currentProject.revision,
-            proposal: chatJson.proposal ?? null,
-            response: chatJson,
-          });
-          return;
-        }
-
-        if (operation === "scene.apply" || operation === "apply") {
-          if (proposal_id) {
-            const appRes = await fetch(
-              `${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}/proposals/${encodeURIComponent(proposal_id)}/approve`,
-              { method: "POST" },
-            );
-            const appJson = (await appRes.json()) as Record<string, unknown>;
-            res.status(appRes.status).json({
-              ok: appRes.ok,
-              operation: "scene.apply",
-              scene_id: `pascal_${currentProject.id}`,
-              ...appJson,
-            });
-            return;
-          }
-
-          if (patch?.furniture && Array.isArray(patch.furniture)) {
-            const putRes = await fetch(
-              `${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}/furniture`,
-              {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  furniture: patch.furniture,
-                  reason: patch.reason || `Cập nhật từ ${agent_key} qua Pascal Scene Adapter`,
-                }),
-              },
-            );
-            const putJson = (await putRes.json()) as Record<string, unknown>;
-            res.status(putRes.status).json({
-              ok: putRes.ok,
-              operation: "scene.apply",
-              scene_id: `pascal_${currentProject.id}`,
-              ...putJson,
-            });
-            return;
-          }
-        }
-
-        if (operation === "scene.restore" || operation === "restore") {
-          const revToRestore = Number(target_revision ?? 1);
-          const restRes = await fetch(
-            `${PYTHON_API_URL}/api/v1/projects/${encodeURIComponent(project_id)}/revisions/${revToRestore}/restore`,
-            { method: "POST" },
-          );
-          const restJson = (await restRes.json()) as Record<string, unknown>;
-          res.status(restRes.status).json({
-            ok: restRes.ok,
-            operation: "scene.restore",
-            scene_id: `pascal_${currentProject.id}`,
-            ...restJson,
-          });
-          return;
-        }
-
-        res.status(400).json({
-          ok: false,
-          error: `Unsupported scene operation: ${String(operation)}`,
-        });
-      } finally {
-        activeSceneWriteLocks.delete(project_id);
+      const workspace = await pascalProjectWorkspace(project.id) as { scenes?: Array<{ scene_id?: string }> };
+      const sceneId = req.body?.project_id ?? req.body?.projectId;
+      if (!workspace.scenes?.some((scene) => scene.scene_id === sceneId)) {
+        res.status(404).json({ ok: false, error: "Scene not found in this project" }); return;
       }
     } catch (error) {
-      res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      res.status(503).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); return;
     }
+    await sceneHandler(req, res);
   });
 
   // ============================================================================

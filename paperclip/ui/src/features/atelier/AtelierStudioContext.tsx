@@ -86,6 +86,7 @@ interface AtelierStudioContextValue {
   handleSaveScene: () => Promise<void>;
   handleExport: (format: "dxf" | "glb") => Promise<void>;
   handleAssignAsset: (entityId: string, assetId: string) => Promise<void>;
+  handleImportAssetAndAssign: (entityId: string, file: File) => Promise<void>;
   handleCreateMaterialProposal: (entityId: string, payload: any) => Promise<any>;
   handleCreateSurfaceMaterialProposal: (surfaceKey: string, payload: any) => Promise<any>;
   handleRequestSmartFit: (entityId: string) => Promise<any>;
@@ -609,6 +610,45 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
     return response.json();
   }, [activeProjectId, refreshProjectBundle]);
 
+  const handleImportAssetAndAssign = useCallback(async (entityId: string, file: File) => {
+    const selectedFurniture = project?.furniture_instances?.find((item: any) => item.id === entityId);
+    if (!selectedFurniture) throw new Error("Không tìm thấy nội thất cần gắn model");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", selectedFurniture.name || file.name.replace(/\.glb$/i, ""));
+    form.append("category", selectedFurniture.category || "furniture");
+    form.append("author", "Người dùng ATELIER AI");
+    form.append("license_name", "User-provided — quyền sử dụng do người tải lên xác nhận");
+    form.append("scene_object_id", entityId);
+
+    setBusyMessage("Đang kiểm tra và chuẩn hóa GLB...");
+    try {
+      const importedResponse = await fetch(`${API_BASE}/assets/import/user`, {
+        method: "POST",
+        body: form,
+      });
+      if (!importedResponse.ok) {
+        const payload = await importedResponse.json().catch(() => null);
+        throw new Error(payload?.detail || `Nhập GLB thất bại (${importedResponse.status})`);
+      }
+      const imported = await importedResponse.json();
+      const asset = imported.asset;
+      if (!asset?.asset_id) throw new Error("Asset GLB không có mã định danh");
+
+      const assignResponse = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/assign-asset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asset_id: asset.asset_id }),
+      });
+      if (!assignResponse.ok) throw new Error(`Gắn GLB thất bại (${assignResponse.status})`);
+      setAssetLibrary((current) => [asset, ...current.filter((item) => item.asset_id !== asset.asset_id)]);
+      await refreshProjectBundle(activeProjectId);
+      showToast(`Đã gắn model GLB thật cho ${selectedFurniture.name}.`);
+    } finally {
+      setBusyMessage(null);
+    }
+  }, [activeProjectId, project, refreshProjectBundle, showToast]);
+
   const handleCreateMaterialProposal = useCallback(async (entityId: string, payload: any) => {
     const response = await fetch(`${API_BASE}/projects/${activeProjectId}/furniture/${entityId}/material-proposals`, {
       method: "POST",
@@ -879,6 +919,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleSaveScene,
       handleExport,
       handleAssignAsset,
+      handleImportAssetAndAssign,
       handleCreateMaterialProposal,
       handleCreateSurfaceMaterialProposal,
       handleRequestSmartFit,
@@ -930,6 +971,7 @@ export function AtelierStudioProvider({ children }: { children: ReactNode }) {
       handleSaveScene,
       handleExport,
       handleAssignAsset,
+      handleImportAssetAndAssign,
       handleCreateMaterialProposal,
       handleCreateSurfaceMaterialProposal,
       handleRequestSmartFit,

@@ -15,7 +15,14 @@ import sqlite3
 import unicodedata
 import urllib.request
 import pytest
-import psycopg
+
+try:
+    import psycopg
+except ImportError:
+    # Some managed Windows machines block psycopg's native pq wrapper via
+    # Application Control. Keep the portable Unicode tests runnable and skip
+    # only the PostgreSQL-driver integration check in that environment.
+    psycopg = None
 
 SAMPLE_STRINGS = [
     "Ngân sách trần cho phòng ngủ trẻ em là mức nào?",
@@ -63,6 +70,8 @@ def test_sqlite_unicode_roundtrip(tmp_path):
 
 def test_postgres_unicode_roundtrip():
     """Verify embedded PostgreSQL database persists Vietnamese text and JSONB correctly."""
+    if psycopg is None:
+        pytest.skip("psycopg pq wrapper is unavailable or blocked by Windows Application Control")
     conn = psycopg.connect("postgres://paperclip:paperclip@127.0.0.1:54329/paperclip")
     with conn.cursor() as cur:
         # Check server and client encoding

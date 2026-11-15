@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray } from "drizzle-orm";
+import type { IssueDisplayStatus } from "@paperclipai/shared";
 import {
   type Db,
   agents,
@@ -6,15 +7,31 @@ import {
   companies,
   companyMemberships,
   goals,
+  issueApprovals,
   issueComments,
   issues,
   projects,
 } from "@paperclipai/db";
-import { addTelegramLog, getTelegramConfigSync } from "./config.js";
+import { addTelegramLog, getTelegramConfigSync, saveTelegramConfig } from "./config.js";
+import {
+  chooseTelegramProject,
+  describeTelegramProjectContext,
+  readTelegramProjectContext,
+  TelegramProjectContextError,
+} from "./project-context.js";
+import { issueDisplayStatusSql } from "../issue-display-status.js";
+import { issueService } from "../issues.js";
+import { logActivity } from "../activity-log.js";
 import {
   queueIssueAssignmentWakeup,
   type IssueAssignmentWakeupDeps,
 } from "../issue-assignment-wakeup.js";
+import {
+  ATELIER_TELEGRAM_FINAL_APPROVAL_INSTRUCTIONS,
+  buildAtelierTelegramApprovalDecisionPatch,
+  createAtelierTelegramApprovalPolicy,
+  createAtelierTelegramOriginId,
+} from "./approval-gate.js";
 
 export interface AtelierAgentInfo {
   id: string;
@@ -30,6 +47,7 @@ export interface AtelierTaskSummary {
   identifier: string;
   title: string;
   status: string;
+  displayStatus: IssueDisplayStatus;
   priority: string;
   assignedAgentName: string;
   assignedAgentId: string | null;
@@ -94,6 +112,7 @@ export class AtelierTelegramTaskManager {
     return fallback?.principalId ?? null;
   }
 
+  /** Compatibility for company-only readers. Task creation must use resolveProjectContext. */
   public async getCompanyAndProject(): Promise<{ companyId: string; projectId: string; companyPrefix: string }> {
     const [comp] = await this.db
       .select()
@@ -102,28 +121,61 @@ export class AtelierTelegramTaskManager {
       .limit(1);
 
     if (!comp) {
-      // Fallback to first company
-      const [firstComp] = await this.db.select().from(companies).limit(1);
+      // Legacy single-company installs remain supported; ambiguity must not select a tenant.
+      const companyRows = await this.db.select().from(companies).limit(2);
+      if (companyRows.length > 1) throw new TelegramProjectContextError("Telegram company is ambiguous: configure the ATL company before selecting a project.");
+      const [firstComp] = companyRows;
       if (!firstComp) throw new Error("No company found in database");
-      const [firstProj] = await this.db.select().from(projects).where(eq(projects.companyId, firstComp.id)).limit(1);
       return {
         companyId: firstComp.id,
-        projectId: firstProj?.id || "",
+        projectId: "",
         companyPrefix: firstComp.issuePrefix || "ATL",
       };
     }
 
-    const [proj] = await this.db
-      .select()
-      .from(projects)
-      .where(eq(projects.companyId, comp.id))
-      .limit(1);
-
     return {
       companyId: comp.id,
-      projectId: proj?.id || "",
+      projectId: "",
       companyPrefix: comp.issuePrefix || "ATL",
     };
+  }
+
+  public async listProjects() {
+    const { companyId } = await this.getCompanyAndProject();
+    return this.db.select({ id: projects.id, name: projects.name, companyId: projects.companyId })
+      .from(projects).where(eq(projects.companyId, companyId));
+  }
+
+  public async resolveProjectContext(telegramChatId: number, nativeProjectId?: string) {
+    if (!Number.isSafeInteger(telegramChatId)) {
+      throw new TelegramProjectContextError("A valid Telegram chat ID is required to select project context.");
+    }
+    const { companyId, companyPrefix } = await this.getCompanyAndProject();
+    const selection = nativeProjectId !== undefined
+      ? { telegramChatId, companyId, nativeProjectId }
+      : getTelegramConfigSync().chatProjectSelections.find((entry) => entry.telegramChatId === telegramChatId);
+    const project = chooseTelegramProject(companyId, await this.listProjects(), selection);
+    const context = await readTelegramProjectContext(project);
+    return { ...context, companyPrefix };
+  }
+
+  public async selectProjectForChat(telegramChatId: number, nativeProjectId: string) {
+    const context = await this.resolveProjectContext(telegramChatId, nativeProjectId);
+    const config = getTelegramConfigSync();
+    try {
+      await saveTelegramConfig({
+        chatProjectSelections: [
+          ...config.chatProjectSelections.filter((entry) => entry.telegramChatId !== telegramChatId),
+          { telegramChatId, companyId: context.companyId, nativeProjectId: context.nativeProjectId },
+        ],
+      }, true);
+    } catch {
+      throw new TelegramProjectContextError("Could not persist Telegram project selection. Check configuration storage and retry /project.");
+    }
+    addTelegramLog("info", "Selected Telegram chat project", {
+      telegramChatId, companyId: context.companyId, nativeProjectId: context.nativeProjectId, sceneId: context.sceneId,
+    });
+    return context;
   }
 
   public async listAgents(): Promise<AtelierAgentInfo[]> {
@@ -175,8 +227,18 @@ export class AtelierTelegramTaskManager {
       }
     }
 
+    // Action intent takes precedence over incidental nouns. A furniture-layout
+    // request often mentions that lighting/ceiling must stay unchanged; those
+    // negative constraints must not route the task to Lighting.
+    const furnitureLayoutIntent = /(bố trí|sắp xếp|di chuyển|đặt lại|đặt sát|tối ưu diện tích|layout|rearrange)/iu.test(q)
+      && /(nội thất|giường|tab đầu giường|tủ|kệ|bàn|ghế|thảm|két sắt|furniture)/iu.test(q);
+    if (furnitureLayoutIntent) {
+      return agentsList.find((a) => a.key === "agent_furniture") || null;
+    }
+    const lightingExplicitlyOutOfScope = /(?:trần|đèn|chiếu sáng|ánh sáng|ceiling|lighting).{0,80}(?:ngoài phạm vi|giữ nguyên|không thay đổi|không đổi)|(?:ngoài phạm vi|giữ nguyên|không thay đổi|không đổi).{0,80}(?:trần|đèn|chiếu sáng|ánh sáng|ceiling|lighting)/iu.test(q);
+
     // Keyword heuristics
-    if (q.includes("trần") || q.includes("đèn") || q.includes("chiếu sáng") || q.includes("downlight") || q.includes("ceiling") || q.includes("lighting")) {
+    if (!lightingExplicitlyOutOfScope && (q.includes("trần") || q.includes("đèn") || q.includes("chiếu sáng") || q.includes("downlight") || q.includes("ceiling") || q.includes("lighting"))) {
       return agentsList.find((a) => a.key === "agent_ceiling_lighting") || null;
     }
     if (q.includes("vật liệu") || q.includes("gạch") || q.includes("an cường") || q.includes("eurotile") || q.includes("đồng tâm") || q.includes("material")) {
@@ -224,20 +286,28 @@ export class AtelierTelegramTaskManager {
     return list.find((a) => a.key === "agent_chief_architect") || list[0] || null;
   }
 
-  public async listActiveTasks(limit = 10): Promise<AtelierTaskSummary[]> {
+  public async listActiveTasks(limit = 10, telegramChatId?: number): Promise<AtelierTaskSummary[]> {
     const { companyId } = await this.getCompanyAndProject();
+    const nativeProjectId = telegramChatId === undefined
+      ? null
+      : (await this.resolveProjectContext(telegramChatId)).nativeProjectId;
     const rows = await this.db
       .select({
         id: issues.id,
         identifier: issues.identifier,
         title: issues.title,
         status: issues.status,
+        displayStatus: issueDisplayStatusSql(),
         priority: issues.priority,
         createdAt: issues.createdAt,
         assigneeAgentId: issues.assigneeAgentId,
       })
       .from(issues)
-      .where(and(eq(issues.companyId, companyId), inArray(issues.status, ["backlog", "todo", "in_progress", "in_review"])))
+      .where(and(
+        eq(issues.companyId, companyId),
+        ...(nativeProjectId ? [eq(issues.projectId, nativeProjectId)] : []),
+        inArray(issues.status, ["backlog", "todo", "in_progress", "in_review", "blocked"]),
+      ))
       .orderBy(desc(issues.issueNumber))
       .limit(limit);
 
@@ -248,6 +318,7 @@ export class AtelierTelegramTaskManager {
       identifier: r.identifier || `ATL-${r.id.slice(0, 4)}`,
       title: r.title,
       status: r.status,
+      displayStatus: r.displayStatus,
       priority: r.priority,
       assignedAgentName: (r.assigneeAgentId ? agentMap.get(r.assigneeAgentId) : null) || "Chưa phân công",
       assignedAgentId: r.assigneeAgentId,
@@ -257,49 +328,39 @@ export class AtelierTelegramTaskManager {
   }
 
   public async getTaskByIdentifierOrId(identifierOrId: string): Promise<{
-    issue: typeof issues.$inferSelect;
+    issue: typeof issues.$inferSelect & { displayStatus: IssueDisplayStatus };
     comments: (typeof issueComments.$inferSelect)[];
     assignedAgentName: string;
   } | null> {
     const clean = identifierOrId.trim().toUpperCase();
-    let [found] = await this.db
-      .select()
+    // Select exactly one identity form. Never reinterpret a missing UUID or
+    // full identifier as an issue number based on its trailing digits.
+    let identity;
+    if (/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(clean)) {
+      identity = eq(issues.id, clean.toLowerCase());
+    } else if (/^[1-9]\d*$/.test(clean)) {
+      const issueNumber = Number(clean);
+      if (!Number.isSafeInteger(issueNumber) || issueNumber > 2_147_483_647) return null;
+      identity = eq(issues.issueNumber, issueNumber);
+    } else if (/^[A-Z][A-Z0-9]*-[1-9]\d*$/.test(clean)) {
+      identity = eq(issues.identifier, clean);
+    } else {
+      return null;
+    }
+
+    const { companyId } = await this.getCompanyAndProject();
+    const [found] = await this.db
+      .select({ ...getTableColumns(issues), displayStatus: issueDisplayStatusSql() })
       .from(issues)
-      .where(eq(issues.identifier, clean))
+      .where(and(eq(issues.companyId, companyId), identity))
       .limit(1);
-
-    if (!found) {
-      // Try by issueNumber if user wrote e.g. "1" or "ATL-1"
-      const numMatch = clean.match(/(\d+)$/);
-      if (numMatch) {
-        const num = parseInt(numMatch[1], 10);
-        [found] = await this.db
-          .select()
-          .from(issues)
-          .where(eq(issues.issueNumber, num))
-          .limit(1);
-      }
-    }
-
-    if (!found) {
-      // Try by UUID
-      try {
-        [found] = await this.db
-          .select()
-          .from(issues)
-          .where(eq(issues.id, identifierOrId.trim()))
-          .limit(1);
-      } catch {
-        // Not a UUID, ignore
-      }
-    }
 
     if (!found) return null;
 
     const commentsList = await this.db
       .select()
       .from(issueComments)
-      .where(eq(issueComments.issueId, found.id))
+      .where(and(eq(issueComments.companyId, companyId), eq(issueComments.issueId, found.id)))
       .orderBy(desc(issueComments.createdAt))
       .limit(10);
 
@@ -320,57 +381,41 @@ export class AtelierTelegramTaskManager {
     description: string;
     targetAgentId?: string | null;
     telegramUserId: number;
+    telegramChatId: number;
     telegramUsername?: string;
-  }): Promise<{ issueId: string; identifier: string; assignedAgentName: string }> {
-    const { companyId, projectId, companyPrefix } = await this.getCompanyAndProject();
+  }): Promise<{ issueId: string; identifier: string; assignedAgentName: string; executionStatus: "queued" | "running" | "unconfirmed" }> {
+    // Resolve before any DB write or agent wake; stale/offline context fails closed.
+    const context = await this.resolveProjectContext(params.telegramChatId);
+    const { companyId, nativeProjectId: projectId } = context;
     const actorUserId = await this.resolveTelegramActorUserId(companyId, params.telegramUserId);
     const allAgents = await this.listAgents();
 
     const chief = allAgents.find((a) => a.key === "agent_chief_architect") || allAgents[0];
     const targetAgentId = params.targetAgentId || chief?.id;
     const targetAgent = allAgents.find((a) => a.id === targetAgentId);
+    if (targetAgentId && !targetAgent) throw new Error("Target agent is unavailable in this company");
 
-    // Calculate next sequence issue number and update company counter
-    const [comp] = await this.db
-      .select()
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
-
-    const existingIssues = await this.db
-      .select({ issueNumber: issues.issueNumber })
-      .from(issues)
-      .where(eq(issues.companyId, companyId))
-      .orderBy(desc(issues.issueNumber))
-      .limit(1);
-
-    const maxExisting = existingIssues[0]?.issueNumber ?? 8;
-    const currentCounter = Math.max(comp?.issueCounter ?? 8, maxExisting);
-    const nextNum = currentCounter + 1;
-    const identifier = `${companyPrefix}-${nextNum}`;
-
-    await this.db
-      .update(companies)
-      .set({ issueCounter: nextNum, updatedAt: new Date() })
-      .where(eq(companies.id, companyId));
-
-    const [created] = await this.db
-      .insert(issues)
-      .values({
-        companyId,
-        projectId,
-        title: params.title.slice(0, 120),
-        description: params.description,
-        status: "in_progress",
-        priority: "high",
-        assigneeAgentId: targetAgentId,
-        createdByUserId: actorUserId,
-        responsibleUserId: actorUserId,
-        issueNumber: nextNum,
-        identifier,
-        originKind: "manual",
-      })
-      .returning();
+    const created = await issueService(this.db).create(companyId, {
+      projectId,
+      title: params.title.slice(0, 120),
+      description: `${describeTelegramProjectContext(context)}\n\n## Telegram request\n${params.description}\n\n${ATELIER_TELEGRAM_FINAL_APPROVAL_INSTRUCTIONS}`,
+      status: "todo",
+      priority: "high",
+      assigneeAgentId: targetAgentId,
+      createdByUserId: actorUserId,
+      responsibleUserId: actorUserId,
+      originKind: "chat_channel",
+      originId: createAtelierTelegramOriginId(params.telegramChatId),
+      executionPolicy: actorUserId
+        ? createAtelierTelegramApprovalPolicy(actorUserId)
+        : null,
+    });
+    const identifier = created.identifier!;
+    await logActivity(this.db, {
+      companyId, actorType: actorUserId ? "user" : "system", actorId: actorUserId ?? "telegram",
+      action: "issue.created", entityType: "issue", entityId: created.id,
+      details: { title: created.title, identifier, source: "telegram", telegramChatId: params.telegramChatId, projectId, sceneId: context.sceneId },
+    });
 
     // Insert user's Telegram message as the starting issue comment
     const [createdComment] = await this.db
@@ -384,8 +429,9 @@ export class AtelierTelegramTaskManager {
       })
       .returning({ id: issueComments.id });
 
+    let executionStatus: "queued" | "running" | "unconfirmed" = "unconfirmed";
     if (this.heartbeat && created.assigneeAgentId) {
-      await queueIssueAssignmentWakeup({
+      const wakeResult = await queueIssueAssignmentWakeup({
         heartbeat: this.heartbeat,
         issue: created,
         reason: "issue_assigned",
@@ -396,6 +442,10 @@ export class AtelierTelegramTaskManager {
         taskKey: created.identifier,
         wakeCommentId: createdComment?.id ?? null,
       });
+      if (wakeResult && typeof wakeResult === "object" && "status" in wakeResult
+        && (wakeResult.status === "queued" || wakeResult.status === "running")) {
+        executionStatus = wakeResult.status;
+      }
     }
 
     addTelegramLog("info", `Created Task ${identifier} via Telegram`, {
@@ -408,6 +458,7 @@ export class AtelierTelegramTaskManager {
       issueId: created.id,
       identifier,
       assignedAgentName: targetAgent?.name || "Agent",
+      executionStatus,
     };
   }
 
@@ -417,14 +468,17 @@ export class AtelierTelegramTaskManager {
     telegramUserId: number;
     telegramUsername?: string;
   }): Promise<void> {
-    const { companyId } = await this.getCompanyAndProject();
+    // Replies keep the original task identity even after this chat selects another project.
+    const taskData = await this.getTaskByIdentifierOrId(params.issueId);
+    if (!taskData) throw new Error("Task not found in the Telegram company");
+    const companyId = taskData.issue.companyId;
     const actorUserId = await this.resolveTelegramActorUserId(companyId, params.telegramUserId);
 
     const [createdComment] = await this.db
       .insert(issueComments)
       .values({
         companyId,
-        issueId: params.issueId,
+        issueId: taskData.issue.id,
         authorUserId: actorUserId,
         authorType: actorUserId ? "user" : "system",
         body: `💬 **Phản hồi qua Telegram** (@${params.telegramUsername || params.telegramUserId}):\n\n${params.comment}`,
@@ -432,8 +486,7 @@ export class AtelierTelegramTaskManager {
       .returning({ id: issueComments.id });
 
     if (this.heartbeat) {
-      const taskData = await this.getTaskByIdentifierOrId(params.issueId);
-      if (taskData?.issue.assigneeAgentId) {
+      if (taskData.issue.assigneeAgentId) {
         await queueIssueAssignmentWakeup({
           heartbeat: this.heartbeat,
           issue: taskData.issue,
@@ -515,6 +568,49 @@ export class AtelierTelegramTaskManager {
       })
       .where(eq(approvals.id, params.approvalId));
 
+    const linkedIssues = await this.db
+      .select({ issue: issues })
+      .from(issueApprovals)
+      .innerJoin(issues, and(
+        eq(issues.id, issueApprovals.issueId),
+        eq(issues.companyId, issueApprovals.companyId),
+      ))
+      .where(and(
+        eq(issueApprovals.companyId, existing.companyId),
+        eq(issueApprovals.approvalId, existing.id),
+      ));
+    for (const { issue } of linkedIssues) {
+      const patch = buildAtelierTelegramApprovalDecisionPatch({
+        issue,
+        approvalId: existing.id,
+        decision: params.decision,
+        decisionNote: note,
+      });
+      if (!patch) continue;
+      const updated = await issueService(this.db).update(issue.id, {
+        companyGuard: issue.companyId,
+        ...patch,
+        actorUserId,
+      });
+      if (
+        updated &&
+        updated.status === "in_progress" &&
+        updated.assigneeAgentId &&
+        this.heartbeat
+      ) {
+        await queueIssueAssignmentWakeup({
+          heartbeat: this.heartbeat,
+          issue: updated,
+          reason: "issue_assigned",
+          mutation: "telegram.approval_revision",
+          contextSource: "telegram.approval.decision",
+          requestedByActorType: actorUserId ? "user" : "system",
+          requestedByActorId: actorUserId,
+          taskKey: updated.identifier,
+        });
+      }
+    }
+
     addTelegramLog("info", `Approval ${params.approvalId} decided as ${params.decision}`, {
       decision: params.decision,
       telegramUserId: params.telegramUserId,
@@ -551,36 +647,60 @@ export class AtelierTelegramTaskManager {
     return issue.identifier || issue.id;
   }
 
-  public async getProjectProgress(): Promise<{
+  public async getProjectProgress(telegramChatId?: number): Promise<{
+    nativeProjectId: string | null;
+    projectName: string | null;
     totalTasks: number;
     doneTasks: number;
     inProgressTasks: number;
+    inReviewTasks: number;
     pendingApprovals: number;
     percentDone: number;
   }> {
     const { companyId } = await this.getCompanyAndProject();
+    const context = telegramChatId === undefined ? null : await this.resolveProjectContext(telegramChatId);
+    const selectedProject = context
+      ? (await this.listProjects()).find((project) => project.id === context.nativeProjectId) ?? null
+      : null;
 
     const allIssues = await this.db
-      .select({ status: issues.status })
+      .select({ status: issues.status, displayStatus: issueDisplayStatusSql() })
       .from(issues)
-      .where(eq(issues.companyId, companyId));
+      .where(and(
+        eq(issues.companyId, companyId),
+        ...(context ? [eq(issues.projectId, context.nativeProjectId)] : []),
+      ));
 
-    const totalTasks = allIssues.length;
-    const doneTasks = allIssues.filter((i) => i.status === "done").length;
-    const inProgressTasks = allIssues.filter((i) => i.status === "in_progress").length;
+    // Cancelled work is audit history, not unfinished project scope. Counting it
+    // in the denominator permanently depresses progress after duplicate cleanup.
+    const countedIssues = allIssues.filter((issue) => issue.status !== "cancelled");
+    const totalTasks = countedIssues.length;
+    const doneTasks = countedIssues.filter((i) => i.status === "done").length;
+    const inProgressTasks = countedIssues.filter((i) => i.displayStatus === "in_progress").length;
+    const inReviewTasks = countedIssues.filter((i) => i.displayStatus === "in_review").length;
 
     const pendingApprovalsList = await this.db
-      .select({ id: approvals.id })
+      .select({ id: approvals.id, payload: approvals.payload })
       .from(approvals)
       .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")));
 
     const percentDone = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
+    const projectApprovals = context
+      ? pendingApprovalsList.filter((approval) => {
+          const projectId = approval.payload?.projectId ?? approval.payload?.project_id ?? approval.payload?.nativeProjectId;
+          return projectId === context.nativeProjectId;
+        })
+      : pendingApprovalsList;
+
     return {
+      nativeProjectId: context?.nativeProjectId ?? null,
+      projectName: selectedProject?.name ?? null,
       totalTasks,
       doneTasks,
       inProgressTasks,
-      pendingApprovals: pendingApprovalsList.length,
+      inReviewTasks,
+      pendingApprovals: projectApprovals.length,
       percentDone,
     };
   }

@@ -1,0 +1,852 @@
+﻿{
+    "project_id":  "proj_bedroom_japandi_4x4m",
+    "name":  "Phòng Ngủ Master Japandi (4.19m × 4.04m)",
+    "description":  "Dự án thiết kế nội thất phòng ngủ Japandi 4190×4040mm: giường 1800×2000mm bọc nỉ linen greige giữa vách ốp nan sồi, 2 tab treo, bàn phấn 900mm, tủ áo kịch trần cánh kính khói/mây đan, vách TV sơn be nhạt điểm xám sage, sàn Oak Natural, đèn ray 3000K.",
+    "revision":  1,
+    "units":  "mm",
+    "display_unit":  "m",
+    "scale_calibrated":  true,
+    "scale_reference":  {
+                            "p1_px":  [
+                                          0.0,
+                                          0.0
+                                      ],
+                            "p2_px":  [
+                                          419.0,
+                                          0.0
+                                      ],
+                            "real_length_mm":  4000.0,
+                            "mm_per_px":  10.0,
+                            "confirmed_by_user":  true,
+                            "confidence":  1.0,
+                            "notes":  "Tỷ lệ đã xác nhận (1 cạnh chuẩn)"
+                        },
+    "rooms":  [
+                  {
+                      "id":  "room_master_bedroom",
+                      "name":  "Phòng Ngủ Master",
+                      "room_type":  "bedroom",
+                      "polygon_mm":  [
+                                         [
+                                             0.0,
+                                             0.0
+                                         ],
+                                         [
+                                             4190.0,
+                                             0.0
+                                         ],
+                                         [
+                                             4190.0,
+                                             4040.0
+                                         ],
+                                         [
+                                             0.0,
+                                             4040.0
+                                         ]
+                                     ],
+                      "ceiling_height_mm":  2800.0,
+                      "floor_material_id":  "floor_oak_natural_800x120",
+                      "ceiling_material_id":  "paint_dulux_ceiling_white",
+                      "wall_base_material_id":  "paint_dulux_japandi_ivory",
+                      "wall_tile_zone":  null,
+                      "skirting_material_id":  "skirting_wood_oak_90",
+                      "pascal_node_id":  null
+                  }
+              ],
+    "walls":  [
+                  {
+                      "id":  "wall_north_headboard",
+                      "start_mm":  [
+                                       0.0,
+                                       0.0
+                                   ],
+                      "end_mm":  [
+                                     4190.0,
+                                     0.0
+                                 ],
+                      "thickness_mm":  200.0,
+                      "height_mm":  2800.0,
+                      "is_bearing":  true,
+                      "face_a_material_id":  "veneer_oak_natural_slats",
+                      "face_b_material_id":  "paint_dulux_japandi_ivory",
+                      "is_accent_wall":  true,
+                      "accent_face":  "a",
+                      "pascal_node_id":  null,
+                      "confidence":  0.98
+                  },
+                  {
+                      "id":  "wall_east_window",
+                      "start_mm":  [
+                                       4190.0,
+                                       0.0
+                                   ],
+                      "end_mm":  [
+                                     4190.0,
+                                     4040.0
+                                 ],
+                      "thickness_mm":  200.0,
+                      "height_mm":  2800.0,
+                      "is_bearing":  false,
+                      "face_a_material_id":  "paint_dulux_japandi_ivory",
+                      "face_b_material_id":  "paint_dulux_japandi_ivory",
+                      "is_accent_wall":  false,
+                      "accent_face":  "a",
+                      "pascal_node_id":  null,
+                      "confidence":  0.98
+                  },
+                  {
+                      "id":  "wall_south_entry",
+                      "start_mm":  [
+                                       4190.0,
+                                       4040.0
+                                   ],
+                      "end_mm":  [
+                                     0.0,
+                                     4040.0
+                                 ],
+                      "thickness_mm":  200.0,
+                      "height_mm":  2800.0,
+                      "is_bearing":  true,
+                      "face_a_material_id":  "paint_dulux_japandi_ivory",
+                      "face_b_material_id":  "paint_dulux_japandi_ivory",
+                      "is_accent_wall":  false,
+                      "accent_face":  "a",
+                      "pascal_node_id":  null,
+                      "confidence":  0.98
+                  },
+                  {
+                      "id":  "wall_west_tv",
+                      "start_mm":  [
+                                       0.0,
+                                       4040.0
+                                   ],
+                      "end_mm":  [
+                                     0.0,
+                                     0.0
+                                 ],
+                      "thickness_mm":  200.0,
+                      "height_mm":  2800.0,
+                      "is_bearing":  false,
+                      "face_a_material_id":  "paint_dulux_sage_accent",
+                      "face_b_material_id":  "paint_dulux_japandi_ivory",
+                      "is_accent_wall":  true,
+                      "accent_face":  "a",
+                      "pascal_node_id":  null,
+                      "confidence":  0.98
+                  }
+              ],
+    "openings":  [
+                     {
+                         "id":  "door_entry",
+                         "wall_id":  "wall_south_entry",
+                         "wall_index":  2,
+                         "t":  0.15,
+                         "width_mm":  900.0,
+                         "height_mm":  2100.0,
+                         "sill_height_mm":  0.0,
+                         "door_type":  "hinged",
+                         "swing_direction":  "inward",
+                         "hinges_side":  "left",
+                         "room_id":  "room_master_bedroom",
+                         "pascal_node_id":  null
+                     }
+                 ],
+    "windows":  [
+                    {
+                        "id":  "win_east",
+                        "wall_id":  "wall_east_window",
+                        "wall_index":  1,
+                        "t":  0.5,
+                        "width_mm":  1600.0,
+                        "height_mm":  1400.0,
+                        "sill_height_mm":  900.0,
+                        "window_type":  "sliding",
+                        "room_id":  "room_master_bedroom",
+                        "pascal_node_id":  null
+                    }
+                ],
+    "furniture_instances":  [
+                                {
+                                    "id":  "bed_japandi_master",
+                                    "sku":  "BED-JAP-LINEN-180",
+                                    "name":  "Giường Ngủ Japandi Vải Linen Greige 1.8x2.0m",
+                                    "category":  "bed",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  2095.0,
+                                    "y_mm":  1100.0,
+                                    "z_mm":  0.0,
+                                    "width_mm":  1800.0,
+                                    "depth_mm":  2000.0,
+                                    "height_mm":  950.0,
+                                    "rotation_deg":  0.0,
+                                    "color_hex":  "#D5CBBF",
+                                    "price_vnd":  28500000.0,
+                                    "pascal_asset_id":  "bed-double",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "Nhà Xinh / Atelier Custom (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "nightstand_left",
+                                    "sku":  "TAB-OAK-40-L",
+                                    "name":  "Tab Đầu Giường Treo Tường (Trái)",
+                                    "category":  "nightstand",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  950.0,
+                                    "y_mm":  250.0,
+                                    "z_mm":  450.0,
+                                    "width_mm":  400.0,
+                                    "depth_mm":  350.0,
+                                    "height_mm":  200.0,
+                                    "rotation_deg":  0.0,
+                                    "color_hex":  "#C8A986",
+                                    "price_vnd":  2400000.0,
+                                    "pascal_asset_id":  "nightstand",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "An Cường Wood (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "nightstand_right",
+                                    "sku":  "TAB-OAK-40-R",
+                                    "name":  "Tab Đầu Giường Treo Tường (Phải)",
+                                    "category":  "nightstand",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  3240.0,
+                                    "y_mm":  250.0,
+                                    "z_mm":  450.0,
+                                    "width_mm":  400.0,
+                                    "depth_mm":  350.0,
+                                    "height_mm":  200.0,
+                                    "rotation_deg":  0.0,
+                                    "color_hex":  "#C8A986",
+                                    "price_vnd":  2400000.0,
+                                    "pascal_asset_id":  "nightstand",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "An Cường Wood (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "vanity_desk",
+                                    "sku":  "DESK-VANITY-OAK-90",
+                                    "name":  "Bàn Phấn \u0026 Làm Việc Gỗ Sồi 900mm",
+                                    "category":  "desk",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  3800.0,
+                                    "y_mm":  1600.0,
+                                    "z_mm":  0.0,
+                                    "width_mm":  900.0,
+                                    "depth_mm":  500.0,
+                                    "height_mm":  750.0,
+                                    "rotation_deg":  90.0,
+                                    "color_hex":  "#C8A986",
+                                    "price_vnd":  6800000.0,
+                                    "pascal_asset_id":  "desk",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "Atelier Millwork (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "wardrobe_full_height",
+                                    "sku":  "WARDROBE-JAP-FLUTED-320",
+                                    "name":  "Hệ Tủ Áo Kịch Trần Cánh Kính Khói \u0026 Mây Đan 3.2m",
+                                    "category":  "wardrobe",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  2300.0,
+                                    "y_mm":  3740.0,
+                                    "z_mm":  0.0,
+                                    "width_mm":  3200.0,
+                                    "depth_mm":  600.0,
+                                    "height_mm":  2800.0,
+                                    "rotation_deg":  180.0,
+                                    "color_hex":  "#F0EBE1",
+                                    "price_vnd":  34500000.0,
+                                    "pascal_asset_id":  "wardrobe",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "Atelier Joinery Suite (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "tv_console_floating",
+                                    "sku":  "TV-CONSOLE-WALL-180",
+                                    "name":  "Kệ TV Treo Thấp Gỗ Sồi Bo Góc 1.8m",
+                                    "category":  "tv_cabinet",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  200.0,
+                                    "y_mm":  2020.0,
+                                    "z_mm":  350.0,
+                                    "width_mm":  1800.0,
+                                    "depth_mm":  350.0,
+                                    "height_mm":  250.0,
+                                    "rotation_deg":  270.0,
+                                    "color_hex":  "#C8A986",
+                                    "price_vnd":  5200000.0,
+                                    "pascal_asset_id":  "tv_console",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "Atelier Millwork (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                },
+                                {
+                                    "id":  "rug_oatmeal_flatweave",
+                                    "sku":  "RUG-OATMEAL-200X240",
+                                    "name":  "Thảm Dệt Phẳng Oatmeal 2.0x2.4m",
+                                    "category":  "rug",
+                                    "room_id":  "room_master_bedroom",
+                                    "x_mm":  2095.0,
+                                    "y_mm":  1600.0,
+                                    "z_mm":  0.0,
+                                    "width_mm":  2000.0,
+                                    "depth_mm":  2400.0,
+                                    "height_mm":  15.0,
+                                    "rotation_deg":  0.0,
+                                    "color_hex":  "#E8E2D5",
+                                    "price_vnd":  4800000.0,
+                                    "pascal_asset_id":  "rug",
+                                    "pascal_node_id":  null,
+                                    "source_url":  null,
+                                    "vendor":  "Hanoia / Nhà Xinh (Minh họa)",
+                                    "asset_id":  null,
+                                    "asset_version":  null,
+                                    "geometry_hash":  null,
+                                    "normalized_glb":  null,
+                                    "material_slots":  [
+
+                                                       ],
+                                    "material_overrides":  {
+
+                                                           },
+                                    "sizing_policy":  "FIXED_SIZE",
+                                    "uniform_scale_range":  [
+                                                                1.0,
+                                                                1.0
+                                                            ],
+                                    "original_dimensions_mm":  [
+
+                                                               ],
+                                    "parametric_module_mm":  null,
+                                    "parametric_axes":  [
+
+                                                        ]
+                                }
+                            ],
+    "surface_material_overrides":  {
+
+                                   },
+    "design_brief":  {
+                         "style":  "Japandi",
+                         "room_function":  "Phòng khách sinh hoạt chung \u0026 tiếp khách",
+                         "color_palette":  [
+                                               "#F5F2EB",
+                                               "#C8A986",
+                                               "#B8C2B4",
+                                               "#276E70"
+                                           ],
+                         "liked_elements":  [
+                                                "Gỗ sồi sáng",
+                                                "Không gian thoáng",
+                                                "Vải Linen màu be"
+                                            ],
+                         "disliked_elements":  [
+                                                   "Màu tối nặng nề",
+                                                   "Sofa da cồng kềnh"
+                                               ],
+                         "budget_limit_vnd":  120000000.0,
+                         "occupants":  "Gia đình trẻ 2-3 người",
+                         "must_have_constraints":  [
+                                                       "Lối đi tối thiểu 750mm",
+                                                       "Giữ tổng dự toán dưới ngân sách"
+                                                   ],
+                         "approved_decisions":  [
+
+                                                ]
+                     },
+    "estimate_snapshot":  {
+                              "snapshot_id":  "est_5c33e8a28b",
+                              "project_id":  "proj_bedroom_japandi_4x4m",
+                              "revision":  1,
+                              "created_at":  "2026-11-15T02:55:22.079102+00:00",
+                              "scale_verified":  true,
+                              "confidence_level":  "HIGH_VERIFIED_SCALE",
+                              "lines":  [
+                                            {
+                                                "id":  "line_paint_top_veneer_oak_natural_slats",
+                                                "category":  "paint",
+                                                "title":  "Sơn phủ tường (2 nước) — Dulux Ambiance 5in1 — Trắng Ngà Japandi (Warm Ivory)",
+                                                "specification":  "Mã màu DLX-90YY-83/036 (#F5F2EB), thùng 5L",
+                                                "net_quantity":  10.68,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.78,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  1450000.0,
+                                                "subtotal_vnd":  1450000.0,
+                                                "formula_explanation":  "Diện tích sơn thực tế 10.68m2 (đã trừ cửa 4.13m2 \u0026 gạch ốp 0.00m2) × 2 lớp / 12.0m2/L = 1.78L → làm tròn ceil = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_paint_primer_veneer_oak_natural_slats",
+                                                "category":  "paint",
+                                                "title":  "Sơn lót kháng kiềm nội thất (1 nước) cho Dulux (Minh họa)",
+                                                "specification":  "Độ phủ 12.0 m2/L, thùng 5L",
+                                                "net_quantity":  10.68,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  0.89,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  980000.0,
+                                                "subtotal_vnd":  980000.0,
+                                                "formula_explanation":  "ceil((10.68m2 × 1 lớp / 12.0m2/L) / 5.0L) = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_paint_top_paint_dulux_japandi_ivory",
+                                                "category":  "paint",
+                                                "title":  "Sơn phủ tường (2 nước) — Dulux Ambiance 5in1 — Trắng Ngà Japandi (Warm Ivory)",
+                                                "specification":  "Mã màu DLX-90YY-83/036 (#F5F2EB), thùng 5L",
+                                                "net_quantity":  20.98,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  3.5,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  1450000.0,
+                                                "subtotal_vnd":  1450000.0,
+                                                "formula_explanation":  "Diện tích sơn thực tế 20.98m2 (đã trừ cửa 4.13m2 \u0026 gạch ốp 0.00m2) × 2 lớp / 12.0m2/L = 3.50L → làm tròn ceil = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_paint_primer_paint_dulux_japandi_ivory",
+                                                "category":  "paint",
+                                                "title":  "Sơn lót kháng kiềm nội thất (1 nước) cho Dulux (Minh họa)",
+                                                "specification":  "Độ phủ 12.0 m2/L, thùng 5L",
+                                                "net_quantity":  20.98,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.75,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  980000.0,
+                                                "subtotal_vnd":  980000.0,
+                                                "formula_explanation":  "ceil((20.98m2 × 1 lớp / 12.0m2/L) / 5.0L) = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_paint_top_paint_dulux_sage_accent",
+                                                "category":  "paint",
+                                                "title":  "Sơn phủ tường (2 nước) — Dulux Ambiance 5in1 — Trắng Ngà Japandi (Warm Ivory)",
+                                                "specification":  "Mã màu DLX-90YY-83/036 (#F5F2EB), thùng 5L",
+                                                "net_quantity":  10.3,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.72,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  1450000.0,
+                                                "subtotal_vnd":  1450000.0,
+                                                "formula_explanation":  "Diện tích sơn thực tế 10.30m2 (đã trừ cửa 4.13m2 \u0026 gạch ốp 0.00m2) × 2 lớp / 12.0m2/L = 1.72L → làm tròn ceil = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_paint_primer_paint_dulux_sage_accent",
+                                                "category":  "paint",
+                                                "title":  "Sơn lót kháng kiềm nội thất (1 nước) cho Dulux (Minh họa)",
+                                                "specification":  "Độ phủ 12.0 m2/L, thùng 5L",
+                                                "net_quantity":  10.3,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  0.86,
+                                                "unit":  "lít",
+                                                "package_count":  1,
+                                                "package_unit":  "thùng 5L",
+                                                "unit_price_vnd":  980000.0,
+                                                "subtotal_vnd":  980000.0,
+                                                "formula_explanation":  "ceil((10.30m2 × 1 lớp / 12.0m2/L) / 5.0L) = 1 thùng",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://www.dulux.vn/vi/mau-sac (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_floor_room_master_bedroom",
+                                                "category":  "floor_tile_wood",
+                                                "title":  "Vật tư lát sàn (Phòng Ngủ Master) — Sàn Gỗ Công Nghiệp An Cường — Sồi Tự Nhiên 12mm (Lát Thẳng)",
+                                                "specification":  "Quy cách 192×1285mm (staggered), hao hụt 6%",
+                                                "net_quantity":  16.93,
+                                                "waste_rate":  0.06,
+                                                "gross_quantity":  17.94,
+                                                "unit":  "m2",
+                                                "package_count":  13,
+                                                "package_unit":  "thùng (1.48 m2/thùng)",
+                                                "unit_price_vnd":  820000.0,
+                                                "subtotal_vnd":  10660000.0,
+                                                "formula_explanation":  "ceil((16.93 m2 × (1 + 6%)) / 1.48 m2/thùng) = 13 thùng chẵn",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://ancuong.com (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_adh_room_master_bedroom",
+                                                "category":  "adhesive_grout",
+                                                "title":  "Phụ kiện xốp lót / keo dán gạch \u0026 chà ron (Phòng Ngủ Master)",
+                                                "specification":  "Định mức tiêu chuẩn theo diện tích sàn thực tế",
+                                                "net_quantity":  16.93,
+                                                "waste_rate":  0.05,
+                                                "gross_quantity":  17.77,
+                                                "unit":  "m2",
+                                                "package_count":  null,
+                                                "package_unit":  null,
+                                                "unit_price_vnd":  45000.0,
+                                                "subtotal_vnd":  799829.0,
+                                                "formula_explanation":  "16.93 m2 × 1.05 × 45,000 đ/m2",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://ancuong.com (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_skirt_room_master_bedroom",
+                                                "category":  "skirting",
+                                                "title":  "Phào / Len chân tường (Phòng Ngủ Master) — Len Chân Tường Gỗ Cốt HDF Chống Ẩm Cao 90mm — Màu Sồi",
+                                                "specification":  "Chu vi phòng 16.46m trừ cửa đi 0.90m",
+                                                "net_quantity":  15.56,
+                                                "waste_rate":  0.05,
+                                                "gross_quantity":  17.0,
+                                                "unit":  "md",
+                                                "package_count":  null,
+                                                "package_unit":  null,
+                                                "unit_price_vnd":  95000.0,
+                                                "subtotal_vnd":  1615000.0,
+                                                "formula_explanation":  "ceil((16.46m - 0.90m) × 1.05) = 17 md × 95,000 đ/md",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  null,
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_labor_room_master_bedroom",
+                                                "category":  "labor",
+                                                "title":  "Nhân công thi công lát sàn, đóng phào \u0026 sơn bả hoàn thiện (Phòng Ngủ Master)",
+                                                "specification":  "Sàn 16.9m2 (85,000đ/m2) + Sơn tường 42.0m2 (45,000đ/m2)",
+                                                "net_quantity":  58.89,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  58.89,
+                                                "unit":  "gói",
+                                                "package_count":  null,
+                                                "package_unit":  null,
+                                                "unit_price_vnd":  3326956.0,
+                                                "subtotal_vnd":  3326956.0,
+                                                "formula_explanation":  "(16.93m2 × 85,000đ) + (41.96m2 × 45,000đ)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  null,
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_bed_japandi_master",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Giường Ngủ Japandi Vải Linen Greige 1.8x2.0m",
+                                                "specification":  "SKU: BED-JAP-LINEN-180 | Kích thước: 1800×2000×950mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  28500000.0,
+                                                "subtotal_vnd":  28500000.0,
+                                                "formula_explanation":  "1 bộ × 28,500,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_nightstand_left",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Tab Đầu Giường Treo Tường (Trái)",
+                                                "specification":  "SKU: TAB-OAK-40-L | Kích thước: 400×350×200mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  2400000.0,
+                                                "subtotal_vnd":  2400000.0,
+                                                "formula_explanation":  "1 bộ × 2,400,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_nightstand_right",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Tab Đầu Giường Treo Tường (Phải)",
+                                                "specification":  "SKU: TAB-OAK-40-R | Kích thước: 400×350×200mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  2400000.0,
+                                                "subtotal_vnd":  2400000.0,
+                                                "formula_explanation":  "1 bộ × 2,400,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_vanity_desk",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Bàn Phấn \u0026 Làm Việc Gỗ Sồi 900mm",
+                                                "specification":  "SKU: DESK-VANITY-OAK-90 | Kích thước: 900×500×750mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  6800000.0,
+                                                "subtotal_vnd":  6800000.0,
+                                                "formula_explanation":  "1 bộ × 6,800,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_wardrobe_full_height",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Hệ Tủ Áo Kịch Trần Cánh Kính Khói \u0026 Mây Đan 3.2m",
+                                                "specification":  "SKU: WARDROBE-JAP-FLUTED-320 | Kích thước: 3200×600×2800mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  34500000.0,
+                                                "subtotal_vnd":  34500000.0,
+                                                "formula_explanation":  "1 bộ × 34,500,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_tv_console_floating",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Kệ TV Treo Thấp Gỗ Sồi Bo Góc 1.8m",
+                                                "specification":  "SKU: TV-CONSOLE-WALL-180 | Kích thước: 1800×350×250mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  5200000.0,
+                                                "subtotal_vnd":  5200000.0,
+                                                "formula_explanation":  "1 bộ × 5,200,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            },
+                                            {
+                                                "id":  "line_furn_rug_oatmeal_flatweave",
+                                                "category":  "furniture",
+                                                "title":  "Nội thất rời: Thảm Dệt Phẳng Oatmeal 2.0x2.4m",
+                                                "specification":  "SKU: RUG-OATMEAL-200X240 | Kích thước: 2000×2400×15mm",
+                                                "net_quantity":  1.0,
+                                                "waste_rate":  0.0,
+                                                "gross_quantity":  1.0,
+                                                "unit":  "chiếc/bộ",
+                                                "package_count":  1,
+                                                "package_unit":  "bộ",
+                                                "unit_price_vnd":  4800000.0,
+                                                "subtotal_vnd":  4800000.0,
+                                                "formula_explanation":  "1 bộ × 4,800,000 đ (Đơn giá catalog minh họa)",
+                                                "source_label":  "GIÁ MINH HỌA",
+                                                "source_url":  "https://baya.vn (Giá minh họa)",
+                                                "checked_at":  "2026-11-01"
+                                            }
+                                        ],
+                              "materials_subtotal_vnd":  20364829.0,
+                              "furniture_subtotal_vnd":  84600000.0,
+                              "labor_subtotal_vnd":  3326956.0,
+                              "shipping_fee_vnd":  1500000.0,
+                              "tax_rate":  0.08,
+                              "tax_vnd":  8783343.0,
+                              "total_vnd":  118575128.0,
+                              "budget_limit_vnd":  120000000.0,
+                              "within_budget":  true,
+                              "disclaimer":  "GIÁ MINH HỌA THAM KHẢO — Tính toán bằng công thức hình học xác định (Deterministic Cost Engine), không dùng LLM tự đoán giá."
+                          },
+    "pascal_scene_json":  {
+
+                          },
+    "approval_state":  "APPROVED",
+    "underlay_image_url":  null,
+    "created_at":  "2026-11-13T08:43:30.488601+00:00",
+    "updated_at":  "2026-11-15T02:55:22.077104+00:00",
+    "spatial_qa":  {
+                       "valid":  false,
+                       "collision_count":  3,
+                       "boundary_violation_count":  0,
+                       "door_swing_warning_count":  1,
+                       "min_walkway_mm":  455.0,
+                       "walkway_ok":  false,
+                       "warnings":  [
+                                        "Va chạm hình học giữa \u0027Giường Ngủ Japandi Vải Linen Greige 1.8x2.0m\u0027 và \u0027Thảm Dệt Phẳng Oatmeal 2.0x2.4m\u0027.",
+                                        "Va chạm hình học giữa \u0027Tab Đầu Giường Treo Tường (Trái)\u0027 và \u0027Thảm Dệt Phẳng Oatmeal 2.0x2.4m\u0027.",
+                                        "Va chạm hình học giữa \u0027Tab Đầu Giường Treo Tường (Phải)\u0027 và \u0027Thảm Dệt Phẳng Oatmeal 2.0x2.4m\u0027.",
+                                        "Cửa \u0027door_entry\u0027 (900mm) khi mở có nguy cơ vướng vào \u0027Hệ Tủ Áo Kịch Trần Cánh Kính Khói \u0026 Mây Đan 3.2m\u0027.",
+                                        "Khoảng cách lối đi hẹp nhất (455mm) nhỏ hơn tiêu chuẩn tối thiểu 750mm."
+                                    ]
+                   },
+    "revisions":  [
+                      {
+                          "id":  33,
+                          "revision":  1,
+                          "author":  "System Seed",
+                          "reason":  "Khởi tạo dự án Phòng Ngủ Master Japandi 4.19×4.04m theo mặt bằng thực tế",
+                          "created_at":  "2026-11-13T08:43:30.488601+00:00"
+                      }
+                  ]
+}
